@@ -1,39 +1,24 @@
 #include "DeepSpaceApp.h"
-#include <EntryPoint.h>
-
-namespace {
-inline void PushLayer(Prisma::Layer* layer) {
-    Prisma::Application::Get().PushLayer(layer);
-}
-}
-
-DeepSpaceApp::DeepSpaceApp() {
-}
-
-DeepSpaceApp::~DeepSpaceApp() {
-}
-
-int DeepSpaceApp::OnInitialize() {
-    PRISMA_CORE_INFO("DeepSpace Simulator initialized.");
-    
-    PushLayer(new SimulationLayer());
-    
-    return 0;
-}
-
-void DeepSpaceApp::OnUpdate(Prisma::Timestep ts) {
-    // Basic update logic
-    Prisma::Application::OnUpdate(ts); // Important: calls layers
-}
-
-void DeepSpaceApp::OnRender() {
-    // Render layers logic would go here
-}
-
-void DeepSpaceApp::OnEvent(Prisma::Event& e) {
-    Prisma::Application::OnEvent(e); // Important: calls layers
-}
+#include <PrismaEngine/EntryPoint.h>
 
 Prisma::Application* PrismaCreateApplication() {
     return new DeepSpaceApp();
+}
+
+int main(int argc, char** argv) {
+    Prisma::EngineSpecification spec;
+    spec.Name = "DeepSpace";
+    
+    Prisma::Engine engine(spec);
+    
+    if (engine.Initialize() != 0) {
+        return -1;
+    }
+
+    auto* app = PrismaCreateApplication();
+    int result = engine.Run(std::unique_ptr<Prisma::Application>(app));
+
+    engine.Shutdown();
+
+    return result;
 }
