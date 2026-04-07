@@ -1,8 +1,8 @@
 #pragma once
-#include <vector>
-#include <memory>
-#include <map>
 #include <algorithm>
+#include <map>
+#include <memory>
+#include <vector>
 #include "Part.h"
 
 namespace DeepSpace {
@@ -24,21 +24,33 @@ namespace DeepSpace {
         bool ActivateNextStage() {
             if (m_CurrentStage < 0 || m_Stages.empty()) return false;
 
-            auto it = m_Stages.find(m_CurrentStage);
-            if (it != m_Stages.end()) {
-                // Activate engines and decouplers in the current stage
-                for (auto& part : it->second) {
-                    if (auto engine = std::dynamic_pointer_cast<EnginePart>(part)) {
-                        engine->SetActive(true);
-                        engine->SetThrottle(1.0);
-                    }
-                    if (auto decoupler = std::dynamic_pointer_cast<DecouplerPart>(part)) {
-                        decoupler->Activate();
-                    }
+            auto currentIt = m_Stages.find(m_CurrentStage);
+            if (currentIt == m_Stages.end()) {
+                --m_CurrentStage;
+                return true;
+            }
+
+            // Fire all parts in current stage.
+            for (auto& part : currentIt->second) {
+                if (auto engine = std::dynamic_pointer_cast<EnginePart>(part)) {
+                    engine->SetActive(true);
+                    engine->SetThrottle(1.0);
                 }
-                
-                // Mock Decoupling: Parts from higher stages (already fired) are now dropped
-                // This simulates the decoupler in the current stage dropping the previous stage
+                if (auto decoupler = std::dynamic_pointer_cast<DecouplerPart>(part)) {
+                    decoupler->Activate();
+                }
+            }
+
+            // A decoupler in stage N drops lower stage hardware (N+1, N+2...).
+            bool stageHasDecoupler = false;
+            for (const auto& part : currentIt->second) {
+                if (std::dynamic_pointer_cast<DecouplerPart>(part)) {
+                    stageHasDecoupler = true;
+                    break;
+                }
+            }
+
+            if (stageHasDecoupler) {
                 for (const auto& pair : m_Stages) {
                     if (pair.first > m_CurrentStage) {
                         for (auto& p : pair.second) {
@@ -47,8 +59,8 @@ namespace DeepSpace {
                     }
                 }
             }
-            
-            m_CurrentStage--;
+
+            --m_CurrentStage;
             return true;
         }
 

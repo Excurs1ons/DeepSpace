@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <string>
 
 namespace DeepSpace {
@@ -11,16 +12,16 @@ namespace DeepSpace {
         virtual ~Part() = default;
 
         virtual void Update(double dt) {}
-        
-        virtual double GetMass() const { 
+
+        virtual double GetMass() const {
             if (m_Decoupled) return 0.0;
-            return m_DryMass; 
+            return m_DryMass;
         }
-        
+
         virtual double GetThrust(double ambientPressure) const { return 0.0; }
 
         const std::string& GetName() const { return m_Name; }
-        
+
         void SetActive(bool active) { m_Active = active; }
         bool IsActive() const { return m_Active && !m_Decoupled; }
 
@@ -53,25 +54,22 @@ namespace DeepSpace {
         EnginePart(const std::string& name, double mass, double maxThrustVac, double ispSL, double ispVac)
             : Part(name, mass), m_MaxThrustVac(maxThrustVac), m_IspSL(ispSL), m_IspVac(ispVac), m_Throttle(0.0) {}
 
-        void SetThrottle(double throttle) { 
-            m_Throttle = std::max(0.0, std::min(1.0, throttle)); 
+        void SetThrottle(double throttle) {
+            m_Throttle = std::max(0.0, std::min(1.0, throttle));
         }
-        
+
         double GetThrottle() const { return m_Throttle; }
 
-        // Calculate current Isp based on ambient pressure (simplified interpolation)
         double GetCurrentIsp(double ambientPressure) const {
-            double pSL = 101325.0; // Standard sea level pressure
-            double t = std::max(0.0, std::min(1.0, ambientPressure / pSL));
+            const double pSL = 101325.0;
+            const double t = std::max(0.0, std::min(1.0, ambientPressure / pSL));
             return m_IspVac - (m_IspVac - m_IspSL) * t;
         }
 
         double GetThrust(double ambientPressure) const {
-            if (!m_Active) return 0.0;
-            // Thrust in vacuum is fixed by design, but effective thrust changes with Isp
-            // F = m_dot * g0 * Isp(p)
-            double m_dot = GetMaxMassFlowRate();
-            return m_dot * 9.80665 * GetCurrentIsp(ambientPressure) * m_Throttle;
+            if (!m_Active || m_Throttle <= 0.0) return 0.0;
+            const double mDot = GetMaxMassFlowRate();
+            return mDot * 9.80665 * GetCurrentIsp(ambientPressure) * m_Throttle;
         }
 
         double GetMaxMassFlowRate() const {
@@ -79,7 +77,7 @@ namespace DeepSpace {
         }
 
         double GetCurrentMassFlowRate() const {
-            if (!m_Active) return 0.0;
+            if (!m_Active || m_Throttle <= 0.0) return 0.0;
             return GetMaxMassFlowRate() * m_Throttle;
         }
 
@@ -101,12 +99,12 @@ namespace DeepSpace {
         }
 
         bool ConsumeFuel(double amount) {
-            if (m_Decoupled) return false;
+            if (m_Decoupled || amount <= 0.0) return false;
             if (m_CurrentFuel >= amount) {
                 m_CurrentFuel -= amount;
                 return true;
             }
-            m_CurrentFuel = 0;
+            m_CurrentFuel = 0.0;
             return false;
         }
 

@@ -1,56 +1,124 @@
 #pragma once
 #include <PrismaEngine.h>
 #include "../environment/Planet.h"
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace DeepSpace {
 
     struct OrbitalElements {
         double semiMajorAxis; // a
         double eccentricity;  // e
-        double apoapsis;      // Ap
-        double periapsis;     // Pe
-        double inclination;   // i (omitted for 2D simplified math, but placeholder)
+        double apoapsis;      // Ap (altitude)
+        double periapsis;     // Pe (altitude)
+        double inclination;   // i
+        bool isBound;
+    };
+
+    struct OrbitPrediction {
+        double apoapsis;
+        double periapsis;
+        int samples;
     };
 
     class OrbitalMechanics {
     public:
-        // Calculates Keplerian elements from state vectors (position, velocity)
         static OrbitalElements CalculateElements(const Prisma::Vec3d& pos, const Prisma::Vec3d& vel, const Planet& planet) {
-            double mu = Constants::G * 5.9722e24; // Standard gravitational parameter (mu = GM) for Earth
-            
-            double r = pos.Length();
-            double v = vel.Length();
+            const double mu = Constants::G * planet.GetMass();
+            const double r = pos.Length();
+            if (r <= 1.0 || mu <= 0.0) {
+                return {0.0, 0.0, 0.0, 0.0, 0.0, false};
+            }
 
-            // Specific orbital energy: E = v^2 / 2 - mu / r
-            double specificEnergy = (v * v) / 2.0 - (mu / r);
+            const double v2 = vel.LengthSquared();
+            const double specificEnergy = (v2 * 0.5) - (mu / r);
 
-            // Semi-major axis: a = -mu / (2E)
-            double a = -mu / (2.0 * specificEnergy);
+            const Prisma::Vec3d hVec = Prisma::Vec3d::Cross(pos, vel);
+            const double h = hVec.Length();
 
-            // Specific angular momentum vector: h = r x v (Simplified for 2D here)
-            // For a full 3D simulation, we'd use cross product. We'll approximate magnitude for now:
-            // Since our rocket goes straight up, angular momentum is currently ~0, but let's provide the true math.
-            Prisma::Vec3d h_vec(
-                pos.y * vel.z - pos.z * vel.y,
-                pos.z * vel.x - pos.x * vel.z,
-                pos.x * vel.y - pos.y * vel.x
-            );
-            double h = h_vec.Length();
+            Prisma::Vec3d eVec = Prisma::Vec3d::Cross(vel, hVec) / mu;
+            eVec -= pos.Normalized();
+            const double e = eVec.Length();
 
-            // Eccentricity: e = sqrt(1 + (2E h^2) / mu^2)
-            // Or using e_vec = (v x h)/mu - r_dir
-            double e = std::sqrt(std::max(0.0, 1.0 + (2.0 * specificEnergy * h * h) / (mu * mu)));
+            const bool isBound = specificEnergy < 0.0 && e < 1.0;
+            const double inclination = (h > 1e-9)
+                ? std::acos(std::max(-1.0, std::min(1.0, hVec.z / h)))
+                : 0.0;
 
-            // Apoapsis and Periapsis (from center of body)
-            double r_a = a * (1.0 + e);
-            double r_p = a * (1.0 - e);
+            if (!isBound) {
+                const double periR = (e > 1e-9) ? ((h * h) / (mu * (1.0 + e))) : r;
+                return {
+                    std::numeric_limits<double>::infinity(),
+                    e,
+                    std::numeric_limits<double>::infinity(),
+                    periR - planet.GetRadius(),
+                    inclination,
+                    false
+                };
+            }
 
-            // Convert to altitude
-            double apoapsisAlt = r_a - planet.GetRadius();
-            double periapsisAlt = r_p - planet.GetRadius();
+            const double a = -mu / (2.0 * specificEnergy);
+            const double rA = a * (1.0 + e);
+            const double rP = a * (1.0 - e);
 
-            return { a, e, apoapsisAlt, periapsisAlt, 0.0 };
+            return {
+                a,
+                e,
+                rA - planet.GetRadius(),
+                rP - planet.GetRadius(),
+                inclination,
+                true
+            };
+        }
+
+        static OrbitPrediction PredictVacuumExtrema(
+            const Prisma::Vec3d& startPos,
+            const Prisma::Vec3d& startVel,
+            const Planet& planet,
+            double durationSeconds,
+            double dtSeconds)
+        {
+            if (durationSeconds <= 0.0 || dtSeconds <= 0.0) {
+                return {0.0, 0.0, 0};
+            }
+
+            const double mu = Constants::G * planet.GetMass();
+            Prisma::Vec3d pos = startPos;
+            Prisma::Vec3d vel = startVel;
+
+            double minR = pos.Length();
+            double maxR = minR;
+            int samples = 0;
+
+            const int steps = std::max(1, static_cast<int>(durationSeconds / dtSeconds));
+            for (int i = 0; i < steps; ++i) {
+                const double r = pos.Length();
+                if (r <= 1.0) {
+                    break;
+                }
+
+                const double gMag = -(mu / (r * r));
+                const Prisma::Vec3d accel = pos.Normalized() * gMag;
+
+                vel += accel * dtSeconds;
+                pos += vel * dtSeconds;
+
+                const double newR = pos.Length();
+                minR = std::min(minR, newR);
+                maxR = std::max(maxR, newR);
+                ++samples;
+
+                if (newR <= planet.GetRadius()) {
+                    break;
+                }
+            }
+
+            return {
+                maxR - planet.GetRadius(),
+                minR - planet.GetRadius(),
+                samples
+            };
         }
     };
 }

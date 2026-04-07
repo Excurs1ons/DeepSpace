@@ -1,15 +1,22 @@
 #pragma once
-#include <vector>
+#include <algorithm>
 #include <memory>
+#include <vector>
 #include "../physics/PhysicsBody.h"
-#include "Staging.h"
 #include "RCS.h"
+#include "Staging.h"
 
 namespace DeepSpace {
 
+    struct EngineStatus {
+        int activeEngines = 0;
+        double totalThrust = 0.0;
+        double totalMassFlow = 0.0;
+    };
+
     class Vessel {
     public:
-        Vessel(const std::string& name) : m_Name(name), m_RCS(50000.0) {}
+        explicit Vessel(const std::string& name) : m_Name(name), m_RCS(50000.0) {}
 
         void AddPart(std::shared_ptr<Part> part) {
             m_Parts.push_back(part);
@@ -30,38 +37,79 @@ namespace DeepSpace {
             m_PhysicsBody.SetMass(totalMass);
         }
 
-        void Update(double dt, double ambientPressure) {
-            double totalThrustMagnitude = 0.0;
+        EngineStatus Update(double dt, double ambientPressure) {
+            EngineStatus status;
+            if (dt <= 0.0) {
+                return status;
+            }
+
             for (auto& part : m_Parts) {
                 part->Update(dt);
-                if (auto engine = std::dynamic_pointer_cast<EnginePart>(part)) {
-                    if (engine->IsActive() && engine->GetThrottle() > 0.0) {
-                        double massFlow = engine->GetCurrentMassFlowRate() * dt;
-                        bool hasFuel = false;
-                        for (auto& p : m_Parts) {
-                            if (auto tank = std::dynamic_pointer_cast<FuelTankPart>(p)) {
-                                if (tank->GetStage() == engine->GetStage() && !tank->IsDecoupled() && tank->GetCurrentFuel() > 0) {
-                                    double toConsume = std::min(massFlow, tank->GetCurrentFuel());
-                                    tank->ConsumeFuel(toConsume);
-                                    massFlow -= toConsume;
-                                    if (massFlow <= 0.0001) { hasFuel = true; break; }
-                                }
-                            }
-                        }
-                        if (hasFuel || massFlow <= 0.0001) totalThrustMagnitude += engine->GetThrust(ambientPressure);
-                        else engine->SetActive(false);
-                    }
-                }
             }
+
+            for (auto& part : m_Parts) {
+                auto engine = std::dynamic_pointer_cast<EnginePart>(part);
+                if (!engine || !engine->IsActive() || engine->GetThrottle() <= 0.0) {
+                    continue;
+                }
+
+                double requiredFuel = engine->GetCurrentMassFlowRate() * dt;
+                if (requiredFuel <= 0.0) {
+                    continue;
+                }
+
+                const double consumed = ConsumeFuelForStage(engine->GetStage(), requiredFuel);
+                if (consumed <= 0.0) {
+                    engine->SetActive(false);
+                    engine->SetThrottle(0.0);
+                    continue;
+                }
+
+                const double burnRatio = std::min(1.0, consumed / requiredFuel);
+                status.totalThrust += engine->GetThrust(ambientPressure) * burnRatio;
+                status.totalMassFlow += consumed / dt;
+                ++status.activeEngines;
+            }
+
             RecalculateMass();
-            m_PhysicsBody.AddForce(m_PhysicsBody.GetOrientation() * totalThrustMagnitude);
+            m_PhysicsBody.AddForce(m_PhysicsBody.GetOrientation() * status.totalThrust);
+            return status;
         }
 
         PhysicsBody& GetPhysicsBody() { return m_PhysicsBody; }
+        const PhysicsBody& GetPhysicsBody() const { return m_PhysicsBody; }
+
         const std::string& GetName() const { return m_Name; }
         const std::vector<std::shared_ptr<Part>>& GetParts() const { return m_Parts; }
         StagingSystem& GetStaging() { return m_Staging; }
         RCS& GetRCS() { return m_RCS; }
+
+    private:
+        double ConsumeFuelForStage(int stage, double requiredFuel) {
+            if (requiredFuel <= 0.0) return 0.0;
+
+            double remaining = requiredFuel;
+            for (auto& part : m_Parts) {
+                auto tank = std::dynamic_pointer_cast<FuelTankPart>(part);
+                if (!tank || tank->IsDecoupled() || tank->GetStage() != stage) {
+                    continue;
+                }
+
+                const double available = tank->GetCurrentFuel();
+                if (available <= 0.0) {
+                    continue;
+                }
+
+                const double toConsume = std::min(remaining, available);
+                tank->ConsumeFuel(toConsume);
+                remaining -= toConsume;
+                if (remaining <= 1e-6) {
+                    break;
+                }
+            }
+
+            return requiredFuel - remaining;
+        }
 
     private:
         std::string m_Name;

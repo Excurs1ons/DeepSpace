@@ -11,25 +11,21 @@ namespace DeepSpace {
         Atmosphere(double seaLevelPressure, double scaleHeight)
             : m_SeaLevelPressure(seaLevelPressure), m_ScaleHeight(scaleHeight) {}
 
-        // Returns pressure in Pascals (approx 101325 at sea level for Earth)
         double GetPressure(double altitude) const {
             if (altitude < 0) return m_SeaLevelPressure;
             if (altitude > m_ScaleHeight * 10) return 0.0;
             return m_SeaLevelPressure * std::exp(-altitude / m_ScaleHeight);
         }
 
-        // Returns density in kg/m^3
         double GetDensity(double altitude) const {
-            // rho = p / (R_specific * T)
-            // For a simplified isothermal model:
-            double p = GetPressure(altitude);
-            double rho_sl = 1.225; // kg/m^3 at sea level
+            const double p = GetPressure(altitude);
+            const double rho_sl = 1.225;
             return rho_sl * (p / m_SeaLevelPressure);
         }
 
     private:
-        double m_SeaLevelPressure; // Pascals
-        double m_ScaleHeight; // meters
+        double m_SeaLevelPressure;
+        double m_ScaleHeight;
     };
 
     class Planet {
@@ -38,12 +34,11 @@ namespace DeepSpace {
             : m_Name(name), m_Mass(mass), m_Radius(radius), m_Atmosphere(atmosphere) {}
 
         Prisma::Vec3d GetGravityAt(const Prisma::Vec3d& position) const {
-            double r = position.Length();
-            if (r == 0) return {0, 0, 0};
-            
-            // F/m = -G * M / r^2
-            double g_mag = (Constants::G * m_Mass) / (r * r);
-            return position.Normalized() * -g_mag;
+            const double r = position.Length();
+            if (r == 0.0) return {0.0, 0.0, 0.0};
+
+            const double gMag = (Constants::G * m_Mass) / (r * r);
+            return position.Normalized() * -gMag;
         }
 
         double GetAltitude(const Prisma::Vec3d& position) const {
@@ -52,6 +47,7 @@ namespace DeepSpace {
 
         const Atmosphere& GetAtmosphere() const { return m_Atmosphere; }
         double GetRadius() const { return m_Radius; }
+        double GetMass() const { return m_Mass; }
 
     private:
         std::string m_Name;
@@ -59,5 +55,4 @@ namespace DeepSpace {
         double m_Radius;
         Atmosphere m_Atmosphere;
     };
-
 }
