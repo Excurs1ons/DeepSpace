@@ -19,19 +19,19 @@ public:
     SimulationLayer()
         : Layer("SimulationLayer"),
           m_Earth("Earth", 5.9722e24, 6371000.0, Atmosphere(101325.0, 8500.0)),
-          m_Vessel(std::make_shared<Vessel>("Falcon 9")) {}
+          m_Vessel(std::make_shared<Vessel>("Artemis II Mission")) {}
 
     void OnAttach() override {
         PRISMA_INFO("Simulation Layer Attached");
-        BuildFalcon9();
+        BuildArtemis2FlightPlan();
 
         auto& body = m_Vessel->GetPhysicsBody();
         body.SetPosition({0.0, m_Earth.GetRadius(), 0.0});
         body.SetOrientation({0.0, 1.0, 0.0});
-        body.SetInertia(10000000.0);
+        body.SetInertia(12000000.0);
 
         m_Vessel->ActivateNextStage();
-        PRISMA_INFO("LIFTOFF - stage 1 ignition");
+        PRISMA_INFO("T-0: Artemis II ascent stage ignition");
     }
 
     void OnUpdate(Prisma::Timestep ts) override {
@@ -49,20 +49,20 @@ public:
         HandleInput(dt);
 
         if (!m_ManualControlEnabled) {
-            ApplyAscentGuidance(altitude, body);
+            ApplyArtemisAscentGuidance(altitude, body);
         }
 
         const auto elements = OrbitalMechanics::CalculateElements(body.GetPosition(), body.GetVelocity(), m_Earth);
 
-        if (m_Stage1Tank && !m_Stage1Tank->IsDecoupled() && m_Stage1Tank->GetCurrentFuel() <= 0.0 && !m_Stage1Separated) {
-            PRISMA_INFO("MECO - stage separation");
+        if (m_BoosterCoreLoxTank && !m_BoosterCoreLoxTank->IsDecoupled() && m_BoosterCoreLoxTank->GetCurrentFuel() <= 0.0 && !m_BoosterSeparated) {
+            PRISMA_INFO("Booster/core depletion - staging to ICPS");
             m_Vessel->ActivateNextStage();
-            m_Stage1Separated = true;
+            m_BoosterSeparated = true;
             m_Vessel->GetRCS().SetEnabled(true);
             m_RCSState = true;
         }
 
-        if (m_AutopilotCircularize && m_Stage1Separated) {
+        if (m_AutopilotCircularize && m_BoosterSeparated) {
             ApplyCircularizationGuidance(elements, altitude, body);
         }
 
@@ -78,31 +78,37 @@ public:
     }
 
 private:
-    void BuildFalcon9() {
-        auto s2Tank = PartLibrary::CreateFalcon9S2Tank();
-        auto s2Engine = PartLibrary::CreateMerlin1DVac();
-        auto decoupler = std::make_shared<DecouplerPart>("Interstage", 500.0);
+    void BuildArtemis2FlightPlan() {
+        auto icpsLh2 = PartLibrary::CreateArtemis2ICPSLH2Tank();
+        auto icpsLox = PartLibrary::CreateArtemis2ICPSLOXTank();
+        auto icpsEngine = PartLibrary::CreateRL10B2();
+        auto interstage = std::make_shared<DecouplerPart>("ICPS Interstage", 600.0);
 
-        s2Tank->SetStage(0);
-        s2Engine->SetStage(0);
-        decoupler->SetStage(0);
+        icpsLh2->SetStage(0);
+        icpsLox->SetStage(0);
+        icpsEngine->SetStage(0);
+        interstage->SetStage(0);
 
-        m_Vessel->AddPart(s2Tank);
-        m_Vessel->AddPart(s2Engine);
-        m_Vessel->AddPart(decoupler);
+        m_Vessel->AddPart(icpsLh2);
+        m_Vessel->AddPart(icpsLox);
+        m_Vessel->AddPart(icpsEngine);
+        m_Vessel->AddPart(interstage);
 
-        auto s1Tank = PartLibrary::CreateFalcon9S1Tank();
-        s1Tank->SetStage(1);
-        m_Vessel->AddPart(s1Tank);
-        m_Stage1Tank = s1Tank;
+        auto coreRp1 = PartLibrary::CreateFalcon9S1RP1Tank();
+        auto coreLox = PartLibrary::CreateFalcon9S1LOXTank();
+        coreRp1->SetStage(1);
+        coreLox->SetStage(1);
+        m_Vessel->AddPart(coreRp1);
+        m_Vessel->AddPart(coreLox);
+        m_BoosterCoreLoxTank = coreLox;
 
-        for (int i = 0; i < 9; ++i) {
+        for (int i = 0; i < 4; ++i) {
             auto engine = PartLibrary::CreateMerlin1D();
             engine->SetStage(1);
             m_Vessel->AddPart(engine);
         }
 
-        PRISMA_INFO("Vessel built: %s, mass=%.0fkg", m_Vessel->GetName().c_str(), m_Vessel->GetPhysicsBody().GetMass());
+        PRISMA_INFO("Artemis II mission stack ready: %s, mass=%.0fkg", m_Vessel->GetName().c_str(), m_Vessel->GetPhysicsBody().GetMass());
     }
 
     void HandleInput(double dt) {
@@ -152,12 +158,12 @@ private:
         m_Vessel->GetRCS().Stabilize(m_Vessel->GetPhysicsBody(), dt);
     }
 
-    void ApplyAscentGuidance(double altitude, PhysicsBody& body) {
-        if (altitude <= 2000.0 || altitude >= 80000.0 || m_Stage1Separated) {
+    void ApplyArtemisAscentGuidance(double altitude, PhysicsBody& body) {
+        if (altitude <= 1500.0 || altitude >= 90000.0 || m_BoosterSeparated) {
             return;
         }
 
-        const double pitchFactor = (altitude - 2000.0) / 78000.0;
+        const double pitchFactor = (altitude - 1500.0) / 88500.0;
         const double targetAngle = pitchFactor * (kPi / 2.0);
         body.SetOrientation({std::sin(targetAngle), std::cos(targetAngle), 0.0});
         body.SetAngularVelocity(0.0);
@@ -167,12 +173,12 @@ private:
         if (!orbit.isBound) {
             return;
         }
-        if (altitude <= 100000.0 || orbit.periapsis >= 150000.0) {
+        if (altitude <= 120000.0 || orbit.periapsis >= 185000.0) {
             return;
         }
 
         const double distToAp = std::abs(altitude - orbit.apoapsis);
-        const bool nearApoapsis = distToAp < 5000.0;
+        const bool nearApoapsis = distToAp < 4000.0;
         const Prisma::Vec3d velocity = body.GetVelocity();
         if (velocity.Length() > 1e-3) {
             body.SetOrientation(velocity.Normalized());
@@ -207,11 +213,11 @@ private:
             body.GetPosition(),
             body.GetVelocity(),
             m_Earth,
-            900.0,
+            1200.0,
             1.0);
 
         PRISMA_TRACE(
-            "[Telemetry] Alt=%7.0fm Vel=%6.0fm/s Mach=%.2f Ap=%7.0fkm Pe=%7.0fkm PredAp=%7.0fkm PredPe=%7.0fkm Mass=%7.0fkg Eng=%d Thrust=%8.0fkN p=%.0fPa",
+            "[ArtemisII] Alt=%7.0fm Vel=%6.0fm/s Mach=%.2f Ap=%7.0fkm Pe=%7.0fkm PredAp=%7.0fkm PredPe=%7.0fkm Mass=%7.0fkg Eng=%d Thrust=%8.0fkN mdot=%6.1fkg/s fuel=%6.1f ox=%6.1f p=%.0fPa",
             altitude,
             speed,
             mach,
@@ -222,6 +228,9 @@ private:
             body.GetMass(),
             status.activeEngines,
             status.totalThrust / 1000.0,
+            status.totalMassFlow,
+            status.totalFuelFlow,
+            status.totalOxidizerFlow,
             ambientPressure);
 
         m_TelemetryTimer = 0.0;
@@ -230,9 +239,9 @@ private:
 private:
     Planet m_Earth;
     std::shared_ptr<Vessel> m_Vessel;
-    std::shared_ptr<FuelTankPart> m_Stage1Tank;
+    std::shared_ptr<FuelTankPart> m_BoosterCoreLoxTank;
 
-    bool m_Stage1Separated = false;
+    bool m_BoosterSeparated = false;
     bool m_AutopilotCircularize = true;
     bool m_ManualControlEnabled = false;
     bool m_RCSState = false;

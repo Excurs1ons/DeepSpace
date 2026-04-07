@@ -4,6 +4,15 @@
 
 namespace DeepSpace {
 
+    enum class PropellantType {
+        None,
+        RP1,
+        LH2,
+        LOX,
+        MMH,
+        NTO
+    };
+
     class Part {
     public:
         Part(const std::string& name, double dryMass)
@@ -51,14 +60,47 @@ namespace DeepSpace {
 
     class EnginePart : public Part {
     public:
-        EnginePart(const std::string& name, double mass, double maxThrustVac, double ispSL, double ispVac)
-            : Part(name, mass), m_MaxThrustVac(maxThrustVac), m_IspSL(ispSL), m_IspVac(ispVac), m_Throttle(0.0) {}
+        EnginePart(
+            const std::string& name,
+            double mass,
+            double maxThrustVac,
+            double ispSL,
+            double ispVac,
+            PropellantType fuelType,
+            PropellantType oxidizerType,
+            double mixtureRatio)
+            : Part(name, mass),
+              m_MaxThrustVac(maxThrustVac),
+              m_IspSL(ispSL),
+              m_IspVac(ispVac),
+              m_Throttle(0.0),
+              m_FuelType(fuelType),
+              m_OxidizerType(oxidizerType),
+              m_MixtureRatio(std::max(0.0, mixtureRatio)) {}
 
         void SetThrottle(double throttle) {
             m_Throttle = std::max(0.0, std::min(1.0, throttle));
         }
 
         double GetThrottle() const { return m_Throttle; }
+
+        PropellantType GetFuelType() const { return m_FuelType; }
+        PropellantType GetOxidizerType() const { return m_OxidizerType; }
+        double GetMixtureRatio() const { return m_MixtureRatio; }
+
+        double GetFuelMassFraction() const {
+            if (m_OxidizerType == PropellantType::None || m_MixtureRatio <= 0.0) {
+                return 1.0;
+            }
+            return 1.0 / (1.0 + m_MixtureRatio);
+        }
+
+        double GetOxidizerMassFraction() const {
+            if (m_OxidizerType == PropellantType::None || m_MixtureRatio <= 0.0) {
+                return 0.0;
+            }
+            return m_MixtureRatio / (1.0 + m_MixtureRatio);
+        }
 
         double GetCurrentIsp(double ambientPressure) const {
             const double pSL = 101325.0;
@@ -86,12 +128,19 @@ namespace DeepSpace {
         double m_IspSL;
         double m_IspVac;
         double m_Throttle;
+
+        PropellantType m_FuelType;
+        PropellantType m_OxidizerType;
+        double m_MixtureRatio; // O/F mass ratio
     };
 
     class FuelTankPart : public Part {
     public:
-        FuelTankPart(const std::string& name, double dryMass, double fuelCapacity)
-            : Part(name, dryMass), m_FuelCapacity(fuelCapacity), m_CurrentFuel(fuelCapacity) {}
+        FuelTankPart(const std::string& name, double dryMass, double fuelCapacity, PropellantType propellantType)
+            : Part(name, dryMass),
+              m_FuelCapacity(fuelCapacity),
+              m_CurrentFuel(fuelCapacity),
+              m_PropellantType(propellantType) {}
 
         double GetMass() const override {
             if (m_Decoupled) return 0.0;
@@ -109,9 +158,11 @@ namespace DeepSpace {
         }
 
         double GetCurrentFuel() const { return m_CurrentFuel; }
+        PropellantType GetPropellantType() const { return m_PropellantType; }
 
     private:
         double m_FuelCapacity;
         double m_CurrentFuel;
+        PropellantType m_PropellantType;
     };
 }

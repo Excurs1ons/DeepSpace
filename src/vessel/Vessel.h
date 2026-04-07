@@ -12,6 +12,8 @@ namespace DeepSpace {
         int activeEngines = 0;
         double totalThrust = 0.0;
         double totalMassFlow = 0.0;
+        double totalFuelFlow = 0.0;
+        double totalOxidizerFlow = 0.0;
     };
 
     class Vessel {
@@ -53,21 +55,41 @@ namespace DeepSpace {
                     continue;
                 }
 
-                double requiredFuel = engine->GetCurrentMassFlowRate() * dt;
-                if (requiredFuel <= 0.0) {
+                const double requiredMass = engine->GetCurrentMassFlowRate() * dt;
+                if (requiredMass <= 0.0) {
                     continue;
                 }
 
-                const double consumed = ConsumeFuelForStage(engine->GetStage(), requiredFuel);
-                if (consumed <= 0.0) {
+                const double fuelRequired = requiredMass * engine->GetFuelMassFraction();
+                const double oxidizerRequired = requiredMass * engine->GetOxidizerMassFraction();
+
+                const double fuelProvided = ConsumePropellantForStage(
+                    engine->GetStage(),
+                    engine->GetFuelType(),
+                    fuelRequired);
+
+                double oxidizerProvided = oxidizerRequired;
+                if (engine->GetOxidizerType() != PropellantType::None) {
+                    oxidizerProvided = ConsumePropellantForStage(
+                        engine->GetStage(),
+                        engine->GetOxidizerType(),
+                        oxidizerRequired);
+                }
+
+                const double fuelRatio = (fuelRequired > 0.0) ? (fuelProvided / fuelRequired) : 1.0;
+                const double oxidizerRatio = (oxidizerRequired > 0.0) ? (oxidizerProvided / oxidizerRequired) : 1.0;
+                const double burnRatio = std::max(0.0, std::min(1.0, std::min(fuelRatio, oxidizerRatio)));
+
+                if (burnRatio <= 0.0) {
                     engine->SetActive(false);
                     engine->SetThrottle(0.0);
                     continue;
                 }
 
-                const double burnRatio = std::min(1.0, consumed / requiredFuel);
                 status.totalThrust += engine->GetThrust(ambientPressure) * burnRatio;
-                status.totalMassFlow += consumed / dt;
+                status.totalMassFlow += (requiredMass * burnRatio) / dt;
+                status.totalFuelFlow += (fuelRequired * burnRatio) / dt;
+                status.totalOxidizerFlow += (oxidizerRequired * burnRatio) / dt;
                 ++status.activeEngines;
             }
 
@@ -85,13 +107,18 @@ namespace DeepSpace {
         RCS& GetRCS() { return m_RCS; }
 
     private:
-        double ConsumeFuelForStage(int stage, double requiredFuel) {
-            if (requiredFuel <= 0.0) return 0.0;
+        double ConsumePropellantForStage(int stage, PropellantType type, double requiredMass) {
+            if (requiredMass <= 0.0 || type == PropellantType::None) {
+                return 0.0;
+            }
 
-            double remaining = requiredFuel;
+            double remaining = requiredMass;
             for (auto& part : m_Parts) {
                 auto tank = std::dynamic_pointer_cast<FuelTankPart>(part);
                 if (!tank || tank->IsDecoupled() || tank->GetStage() != stage) {
+                    continue;
+                }
+                if (tank->GetPropellantType() != type) {
                     continue;
                 }
 
@@ -108,7 +135,7 @@ namespace DeepSpace {
                 }
             }
 
-            return requiredFuel - remaining;
+            return requiredMass - remaining;
         }
 
     private:
