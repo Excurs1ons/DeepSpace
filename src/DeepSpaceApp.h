@@ -8,12 +8,7 @@
 #include "vessel/PartLibrary.h"
 #include "physics/Aerodynamics.h"
 
-namespace Prisma {
-    namespace Input {
-        inline bool IsKeyPressed(int) { return false; }
-    }
-    enum Key { A, D };
-}
+
 
 using namespace DeepSpace;
 
@@ -47,8 +42,11 @@ public:
         body.AddForce(m_Earth.GetGravityAt(body.GetPosition()) * body.GetMass());
         Aerodynamics::ApplyAerodynamics(body, m_Earth.GetAtmosphere(), altitude);
 
-        if (Prisma::Input::IsKeyPressed(Prisma::Key::A)) m_Vessel->GetRCS().ApplyRotation(body, 1.0, dt);
-        if (Prisma::Input::IsKeyPressed(Prisma::Key::D)) m_Vessel->GetRCS().ApplyRotation(body, -1.0, dt);
+        auto input = Prisma::Engine::Get().GetInputManager();
+        if (input->IsKeyPressed(Prisma::Input::KeyCode::A)) m_Vessel->GetRCS().ApplyRotation(body, 1.0, dt);
+        if (input->IsKeyPressed(Prisma::Input::KeyCode::D)) m_Vessel->GetRCS().ApplyRotation(body, -1.0, dt);
+        if (input->IsKeyPressed(Prisma::Input::KeyCode::W)) m_Vessel->GetRCS().ApplyTranslation(body, {0, 1, 0}, dt);
+        if (input->IsKeyPressed(Prisma::Input::KeyCode::S)) m_Vessel->GetRCS().ApplyTranslation(body, {0, -1, 0}, dt);
 
         if (altitude > 2000.0 && altitude < 80000.0 && !m_Stage1Separated) {
             double pitch = (altitude - 2000.0) / 78000.0 * (M_PI / 2.0);
