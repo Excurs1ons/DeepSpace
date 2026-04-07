@@ -136,9 +136,19 @@ private:
         const bool mPressed = input.IsKeyPressed(Mock::KeyCode::M);
 
         if (rPressed && !m_RPressedLastFrame) {
-            m_RCSState = !m_RCSState;
-            m_Vessel->GetRCS().SetEnabled(m_RCSState);
-            MOCK_INFO("RCS %s", m_RCSState ? "ON" : "OFF");
+            if (m_FireTriggered || m_DepressTriggered || m_ExplosionTriggered) {
+                m_FireTriggered = false;
+                m_DepressTriggered = false;
+                m_ExplosionTriggered = false;
+                if (m_EnduranceStation) {
+                    m_EnduranceStation->SetSpinRate(EnduranceStation::NORMAL_RPM);
+                }
+                MOCK_INFO("Emergency systems reset");
+            } else {
+                m_RCSState = !m_RCSState;
+                m_Vessel->GetRCS().SetEnabled(m_RCSState);
+                MOCK_INFO("RCS %s", m_RCSState ? "ON" : "OFF");
+            }
         }
         if (spacePressed && !m_SpacePressedLastFrame) {
             m_Vessel->ActivateNextStage();

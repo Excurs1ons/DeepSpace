@@ -2,6 +2,7 @@
 #include "../physics/PhysicsBody.h"
 #include "../physics/RotatingFrame.h"
 #include "DockingPort.h"
+#include "Vessel.h"
 #include "../environment/CabinFire.h"
 #include "../environment/Depressurization.h"
 #include "../environment/AirlockExplosion.h"
@@ -52,6 +53,12 @@ public:
     
     void Update(double dt);
     
+    bool InitiateDocking(const std::shared_ptr<Vessel>& vessel, const Vec3d& approachPosition, const Vec3d& approachVelocity);
+    void UpdateDocking(double dt);
+    bool IsDocked() const { return m_IsDocked; }
+    std::weak_ptr<Vessel> GetDockedVessel() const { return m_DockedVessel; }
+    void Undock();
+    
     StationModule& GetModule(StationModuleId id) { return m_Modules[id]; }
     
     static constexpr double RADIUS = 40.0;
@@ -63,6 +70,15 @@ private:
     RotatingFrame m_Frame;
     std::vector<DockingPort> m_DockingPorts;
     std::map<StationModuleId, StationModule> m_Modules;
+    AirlockExplosion m_Explosion;
+    bool m_ExplosionTriggered = false;
+    Depressurization m_Depressurization;
+    
+    bool m_IsDocked = false;
+    std::shared_ptr<Vessel> m_ApproachingVessel;
+    std::weak_ptr<Vessel> m_DockedVessel;
+    double m_DockingProgress = 0.0;
+    bool m_IsDockingInProgress = false;
 };
 
 }

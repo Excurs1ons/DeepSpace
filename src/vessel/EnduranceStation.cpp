@@ -74,7 +74,18 @@ void EnduranceStation::TriggerDepressurization(StationModuleId module, double le
 void EnduranceStation::TriggerExplosion(StationModuleId airlock) {
     auto it = m_Modules.find(airlock);
     if (it != m_Modules.end()) {
-        it->second.depressurization.CreateLeak(1.0);
+        Vec3d explosionPos = it->second.localPosition;
+        
+        m_Explosion.TriggerExplosion(explosionPos, 1000000.0);
+        m_ExplosionTriggered = true;
+        
+        m_Depressurization.CreateLeak(0.5);
+        
+        Vec3d torque = m_Explosion.GetTorqueFromAsymmetricDamage();
+        m_PhysicsBody.AddTorque3D(torque);
+        
+        MOCK_INFO("EXPLOSION at %s! Torque applied: (%.1f, %.1f, %.1f)", 
+                  it->second.name.c_str(), torque.x, torque.y, torque.z);
     }
 }
 
@@ -83,6 +94,51 @@ void EnduranceStation::Update(double dt) {
         pair.second.fire.Update(dt);
         pair.second.depressurization.Update(dt);
     }
+    
+    if (m_ExplosionTriggered) {
+        m_Explosion.Update(dt);
+        
+        double overpressure = m_Explosion.GetOverpressureAt(m_PhysicsBody.GetPosition(), 0.0);
+        MOCK_TRACE("[Explosion] Overpressure: %.2f Pa", overpressure);
+    }
+    
+    UpdateDocking(dt);
+}
+
+bool EnduranceStation::InitiateDocking(const std::shared_ptr<Vessel>& vessel, const Vec3d& approachPosition, const Vec3d& approachVelocity) {
+    if (m_IsDockingInProgress || m_IsDocked) return false;
+    
+    const Vec3d& stationVel = m_PhysicsBody.GetVelocity();
+    const Vec3d relVel = approachVelocity - stationVel;
+    const double relSpeed = relVel.Length();
+    
+    if (relSpeed > 0.5) return false;
+    
+    m_ApproachingVessel = vessel;
+    m_IsDockingInProgress = true;
+    m_DockingProgress = 0.0;
+    
+    MOCK_INFO("Docking initiated with relative velocity: %.2f m/s", relSpeed);
+    return true;
+}
+
+void EnduranceStation::UpdateDocking(double dt) {
+    if (!m_IsDockingInProgress) return;
+    
+    m_DockingProgress += dt * 0.1;
+    
+    if (m_DockingProgress >= 1.0) {
+        m_IsDockingInProgress = false;
+        m_IsDocked = true;
+        m_DockedVessel = m_ApproachingVessel;
+        MOCK_INFO("Docking complete!");
+    }
+}
+
+void EnduranceStation::Undock() {
+    m_IsDocked = false;
+    m_ApproachingVessel.reset();
+    m_DockingProgress = 0.0;
 }
 
 }
