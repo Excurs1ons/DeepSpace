@@ -1,10 +1,9 @@
 #pragma once
-#include <PrismaEngine.h>
 #include <cmath>
-#include "../core/Constants.h"
-#include "../core/Vec3d.h"
+#include "../engine/MockEngine.h"
 
 namespace DeepSpace {
+using Vec3d = Mock::Vec3d;
 
     class Atmosphere {
     public:
@@ -33,15 +32,15 @@ namespace DeepSpace {
         Planet(const std::string& name, double mass, double radius, const Atmosphere& atmosphere)
             : m_Name(name), m_Mass(mass), m_Radius(radius), m_Atmosphere(atmosphere) {}
 
-        Prisma::Vec3d GetGravityAt(const Prisma::Vec3d& position) const {
+        Vec3d GetGravityAt(const Vec3d& position) const {
             const double r = position.Length();
             if (r == 0.0) return {0.0, 0.0, 0.0};
 
-            const double gMag = (Constants::G * m_Mass) / (r * r);
+            const double gMag = (6.67430e-11 * m_Mass) / (r * r);
             return position.Normalized() * -gMag;
         }
 
-        double GetAltitude(const Prisma::Vec3d& position) const {
+        double GetAltitude(const Vec3d& position) const {
             return position.Length() - m_Radius;
         }
 

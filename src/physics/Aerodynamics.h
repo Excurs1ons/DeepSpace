@@ -1,5 +1,4 @@
 #pragma once
-#include <PrismaEngine.h>
 #include <algorithm>
 #include <cmath>
 #include "../environment/Planet.h"
@@ -34,7 +33,7 @@ namespace DeepSpace {
         }
 
         static void ApplyAerodynamics(PhysicsBody& body, const Atmosphere& atmosphere, double altitude) {
-            const Prisma::Vec3d velocity = body.GetVelocity();
+            const Vec3d velocity = body.GetVelocity();
             const double speed = velocity.Length();
             if (speed < 0.1 || altitude > 100000.0) return;
 
@@ -49,12 +48,12 @@ namespace DeepSpace {
             const double q = 0.5 * density * speed * speed;
             const double dragMag = q * cd * area;
 
-            const Prisma::Vec3d velDir = velocity.Normalized();
-            const Prisma::Vec3d dragDir = velDir * -1.0;
-            const Prisma::Vec3d dragForce = dragDir * dragMag;
+            const Vec3d velDir = velocity.Normalized();
+            const Vec3d dragDir = velDir * -1.0;
+            const Vec3d dragForce = dragDir * dragMag;
 
-            const Prisma::Vec3d orientation = body.GetOrientation();
-            const double dot = std::clamp(Prisma::Vec3d::Dot(orientation, velDir), -1.0, 1.0);
+            const Vec3d orientation = body.GetOrientationVec3();
+            const double dot = std::clamp(Vec3d::Dot(orientation, velDir), -1.0, 1.0);
             const double aoa = std::acos(dot);
 
             double cl = 0.0;
@@ -62,13 +61,13 @@ namespace DeepSpace {
                 cl = aoa * 2.0 * 3.14159265358979323846;
             }
 
-            Prisma::Vec3d liftDir(-dragDir.y, dragDir.x, 0.0);
+            Vec3d liftDir(-dragDir.y, dragDir.x, 0.0);
             const double crossZ = orientation.x * velocity.y - orientation.y * velocity.x;
             if (crossZ > 0.0) {
                 liftDir = liftDir * -1.0;
             }
 
-            const Prisma::Vec3d liftForce = liftDir * (q * cl * area * 0.1);
+            const Vec3d liftForce = liftDir * (q * cl * area * 0.1);
             body.AddForce(dragForce + liftForce);
         }
     };

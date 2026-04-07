@@ -1,24 +1,26 @@
+#include "engine/MockEngine.h"
 #include "DeepSpaceApp.h"
-#include <PrismaEngine/EntryPoint.h>
 
-Prisma::Application* PrismaCreateApplication() {
-    return new DeepSpaceApp();
-}
-
-int main(int /*argc*/, char** /*argv*/) {
-    Prisma::EngineSpecification spec;
-    spec.Name = "DeepSpace";
-
-    Prisma::Engine engine(spec);
-
+int main(int argc, char** argv) {
+    Mock::Engine& engine = Mock::Engine::Get();
+    
     if (engine.Initialize() != 0) {
+        std::cerr << "Failed to initialize engine" << std::endl;
         return -1;
     }
-
-    auto* app = PrismaCreateApplication();
-    const int result = engine.Run(std::unique_ptr<Prisma::Application>(app));
-
+    
+    DeepSpace::DeepSpaceApp app;
+    const int result = app.OnInitialize();
+    
+    if (result != 0) {
+        std::cerr << "Failed to initialize application" << std::endl;
+        return result;
+    }
+    
+    app.Run(engine);
+    
+    app.OnShutdown();
     engine.Shutdown();
-
-    return result;
+    
+    return 0;
 }

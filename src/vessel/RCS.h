@@ -1,5 +1,4 @@
 #pragma once
-#include <PrismaEngine.h>
 #include "../physics/PhysicsBody.h"
 #include <cmath>
 
@@ -17,17 +16,17 @@ namespace DeepSpace {
             body.AddTorque(input * m_Power);
         }
 
-        void ApplyTranslation(PhysicsBody& body, const Prisma::Vec3d& localDir, double dt) {
+        void ApplyTranslation(PhysicsBody& body, const Vec3d& localDir, double dt) {
             if (!m_Enabled || localDir.Length() < 0.01 || dt <= 0.0) return;
 
-            const Prisma::Vec3d orientation = body.GetOrientation();
-            Prisma::Vec3d worldForce;
-            if (localDir.y > 0) worldForce += orientation * m_Power;
-            if (localDir.y < 0) worldForce -= orientation * m_Power;
+            const Vec3d orientation = body.GetOrientationVec3();
+            Vec3d worldForce;
+            if (localDir.y > 0) worldForce = worldForce + orientation * m_Power;
+            if (localDir.y < 0) worldForce = worldForce - orientation * m_Power;
 
-            const Prisma::Vec3d right(-orientation.y, orientation.x, 0.0);
-            if (localDir.x > 0) worldForce += right * m_Power;
-            if (localDir.x < 0) worldForce -= right * m_Power;
+            const Vec3d right(-orientation.y, orientation.x, 0.0);
+            if (localDir.x > 0) worldForce = worldForce + right * m_Power;
+            if (localDir.x < 0) worldForce = worldForce - right * m_Power;
 
             body.AddForce(worldForce);
         }

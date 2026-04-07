@@ -1,6 +1,6 @@
 #pragma once
-#include <PrismaEngine.h>
 #include "../environment/Planet.h"
+#include "../core/Constants.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -8,11 +8,11 @@
 namespace DeepSpace {
 
     struct OrbitalElements {
-        double semiMajorAxis; // a
-        double eccentricity;  // e
-        double apoapsis;      // Ap (altitude)
-        double periapsis;     // Pe (altitude)
-        double inclination;   // i
+        double semiMajorAxis;
+        double eccentricity;
+        double apoapsis;
+        double periapsis;
+        double inclination;
         bool isBound;
     };
 
@@ -24,7 +24,7 @@ namespace DeepSpace {
 
     class OrbitalMechanics {
     public:
-        static OrbitalElements CalculateElements(const Prisma::Vec3d& pos, const Prisma::Vec3d& vel, const Planet& planet) {
+        static OrbitalElements CalculateElements(const Vec3d& pos, const Vec3d& vel, const Planet& planet) {
             const double mu = Constants::G * planet.GetMass();
             const double r = pos.Length();
             if (r <= 1.0 || mu <= 0.0) {
@@ -34,10 +34,10 @@ namespace DeepSpace {
             const double v2 = vel.LengthSquared();
             const double specificEnergy = (v2 * 0.5) - (mu / r);
 
-            const Prisma::Vec3d hVec = Prisma::Vec3d::Cross(pos, vel);
+            const Vec3d hVec = Vec3d::Cross(pos, vel);
             const double h = hVec.Length();
 
-            Prisma::Vec3d eVec = Prisma::Vec3d::Cross(vel, hVec) / mu;
+            Vec3d eVec = Vec3d::Cross(vel, hVec) / mu;
             eVec -= pos.Normalized();
             const double e = eVec.Length();
 
@@ -73,8 +73,8 @@ namespace DeepSpace {
         }
 
         static OrbitPrediction PredictVacuumExtrema(
-            const Prisma::Vec3d& startPos,
-            const Prisma::Vec3d& startVel,
+            const Vec3d& startPos,
+            const Vec3d& startVel,
             const Planet& planet,
             double durationSeconds,
             double dtSeconds)
@@ -84,8 +84,8 @@ namespace DeepSpace {
             }
 
             const double mu = Constants::G * planet.GetMass();
-            Prisma::Vec3d pos = startPos;
-            Prisma::Vec3d vel = startVel;
+            Vec3d pos = startPos;
+            Vec3d vel = startVel;
 
             double minR = pos.Length();
             double maxR = minR;
@@ -99,7 +99,7 @@ namespace DeepSpace {
                 }
 
                 const double gMag = -(mu / (r * r));
-                const Prisma::Vec3d accel = pos.Normalized() * gMag;
+                const Vec3d accel = pos.Normalized() * gMag;
 
                 vel += accel * dtSeconds;
                 pos += vel * dtSeconds;
