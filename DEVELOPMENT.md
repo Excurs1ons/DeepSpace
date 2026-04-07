@@ -6,10 +6,15 @@
 
 ## 1. 核心架构设计 (Architecture)
 
-### 1.1 Mock SDK 驱动模式
-由于 PrismaEngine 尚在开发中，我们采用 **Mock SDK** 模式进行开发。
-- **精要**：通过定义一套与引擎一致的头文件接口（如 `PrismaEngine.h`），在无引擎实体的情况下先完成应用层逻辑。
-- **知识点**：这种“接口先行”的模式极大地解耦了应用开发与底层引擎迭代，方便后续无缝迁移。
+### 1.1 PrismaEngine SDK 集成模式
+DeepSpace 使用 **PrismaEngine 预编译 SDK** 进行构建。
+- **SDK 路径**： 目录下包含：
+  - `include/PrismaEngine/` — 引擎头文件（`Window.h`, `EntryPoint.h` 等）
+  - `lib/linux/` — 预编译动态库（`libPrisma.so`, `libSDL3.so`）
+  - `cmake/` — CMake 配置模块（`PrismaEngineConfig.cmake` 等）
+- **集成方式**：通过 `find_package(PrismaEngine REQUIRED)` 引入，`target_link_libraries(DeepSpace PRIVATE PrismaEngine::Engine)` 链接。
+- **禁止内嵌**：不得使用 `add_subdirectory(PrismaEngine)` 将引擎源码嵌入项目。
+- **历史**：早期开发阶殇中使用 Mock SDK（`sdk/mock/`）模仿接口，今已迁移至真实 SDK。
 
 ### 1.2 物理引擎：双精度 (Double Precision) 是底线
 - **踩坑**：最初尝试使用 `float`（单精度），但在模拟行星级尺度（地球半径 6371km）时，微小的速度变化（如 0.1m/s）在巨大的坐标数值面前会产生严重的浮点数舍入误差，导致轨道不闭合。

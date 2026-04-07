@@ -2,6 +2,7 @@
 #include <PrismaEngine.h>
 #include <cmath>
 #include "../core/Constants.h"
+#include "../core/Vec3d.h"
 
 namespace DeepSpace {
 

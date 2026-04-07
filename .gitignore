@@ -1,0 +1,8 @@
+build/
+logs/
+release/
+PrismaEngine-SDK/
+PrismaEngine/
+*.tar.gz
+*.so
+.vscode/
