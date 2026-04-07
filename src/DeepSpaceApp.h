@@ -46,6 +46,7 @@ public:
         body.AddForce(m_Earth.GetGravityAt(pos) * body.GetMass());
         Aerodynamics::ApplyAerodynamics(body, m_Earth.GetAtmosphere(), altitude);
 
+        m_MissionTime += dt;
         HandleInput(dt);
 
         if (!m_ManualControlEnabled) {
@@ -53,14 +54,9 @@ public:
         }
 
         const auto elements = OrbitalMechanics::CalculateElements(body.GetPosition(), body.GetVelocity(), m_Earth);
+        const double dynamicPressure = 0.5 * m_Earth.GetAtmosphere().GetDensity(altitude) * body.GetVelocity().LengthSquared();
 
-        if (m_BoosterCoreLoxTank && !m_BoosterCoreLoxTank->IsDecoupled() && m_BoosterCoreLoxTank->GetCurrentFuel() <= 0.0 && !m_BoosterSeparated) {
-            PRISMA_INFO("Booster/core depletion - staging to ICPS");
-            m_Vessel->ActivateNextStage();
-            m_BoosterSeparated = true;
-            m_Vessel->GetRCS().SetEnabled(true);
-            m_RCSState = true;
-        }
+        ManageMissionEvents(altitude, dynamicPressure);
 
         if (m_AutopilotCircularize && m_BoosterSeparated) {
             ApplyCircularizationGuidance(elements, altitude, body);
@@ -74,20 +70,31 @@ public:
             body.SetVelocity({0.0, 0.0, 0.0});
         }
 
-        EmitTelemetry(altitude, ambientPressure, elements, status, dt);
+        EmitTelemetry(altitude, ambientPressure, elements, status, dynamicPressure, dt);
     }
 
 private:
     void BuildArtemis2FlightPlan() {
+        auto orionMmh = PartLibrary::CreateArtemis2OrionMMHTank();
+        auto orionNto = PartLibrary::CreateArtemis2OrionNTOTank();
+        auto orionAj10 = PartLibrary::CreateAJ10_190();
+        orionMmh->SetStage(0);
+        orionNto->SetStage(0);
+        orionAj10->SetStage(0);
+
         auto icpsLh2 = PartLibrary::CreateArtemis2ICPSLH2Tank();
         auto icpsLox = PartLibrary::CreateArtemis2ICPSLOXTank();
         auto icpsEngine = PartLibrary::CreateRL10B2();
         auto interstage = std::make_shared<DecouplerPart>("ICPS Interstage", 600.0);
 
-        icpsLh2->SetStage(0);
-        icpsLox->SetStage(0);
-        icpsEngine->SetStage(0);
-        interstage->SetStage(0);
+        icpsLh2->SetStage(1);
+        icpsLox->SetStage(1);
+        icpsEngine->SetStage(1);
+        interstage->SetStage(1);
+
+        m_Vessel->AddPart(orionMmh);
+        m_Vessel->AddPart(orionNto);
+        m_Vessel->AddPart(orionAj10);
 
         m_Vessel->AddPart(icpsLh2);
         m_Vessel->AddPart(icpsLox);
@@ -96,19 +103,19 @@ private:
 
         auto coreRp1 = PartLibrary::CreateFalcon9S1RP1Tank();
         auto coreLox = PartLibrary::CreateFalcon9S1LOXTank();
-        coreRp1->SetStage(1);
-        coreLox->SetStage(1);
+        coreRp1->SetStage(2);
+        coreLox->SetStage(2);
         m_Vessel->AddPart(coreRp1);
         m_Vessel->AddPart(coreLox);
         m_BoosterCoreLoxTank = coreLox;
 
         for (int i = 0; i < 4; ++i) {
             auto engine = PartLibrary::CreateMerlin1D();
-            engine->SetStage(1);
+            engine->SetStage(2);
             m_Vessel->AddPart(engine);
         }
 
-        PRISMA_INFO("Artemis II mission stack ready: %s, mass=%.0fkg", m_Vessel->GetName().c_str(), m_Vessel->GetPhysicsBody().GetMass());
+        PRISMA_INFO("Artemis II stack ready: %s, mass=%.0fkg", m_Vessel->GetName().c_str(), m_Vessel->GetPhysicsBody().GetMass());
     }
 
     void HandleInput(double dt) {
@@ -158,6 +165,47 @@ private:
         m_Vessel->GetRCS().Stabilize(m_Vessel->GetPhysicsBody(), dt);
     }
 
+    void ManageMissionEvents(double altitude, double dynamicPressure) {
+        if (!m_MaxQAnnounced) {
+            if (dynamicPressure > m_MaxQObserved) {
+                m_MaxQObserved = dynamicPressure;
+                m_MaxQTime = m_MissionTime;
+            }
+            if (altitude > 18000.0 && m_MaxQObserved > 1000.0) {
+                m_MaxQAnnounced = true;
+                PRISMA_INFO("Max-Q passed at T+%.1fs (q=%.0f Pa)", m_MaxQTime, m_MaxQObserved);
+            }
+        }
+
+        if (!m_BoosterSeparated && m_BoosterCoreLoxTank && m_BoosterCoreLoxTank->GetCurrentFuel() <= 0.0) {
+            PRISMA_INFO("Booster/core depletion - staging to ICPS");
+            m_Vessel->ActivateNextStage();
+            m_BoosterSeparated = true;
+            m_Vessel->GetRCS().SetEnabled(true);
+            m_RCSState = true;
+            m_ICPSIgnitionTime = m_MissionTime;
+        }
+
+        if (m_BoosterSeparated && !m_ICPSSettled) {
+            const double coastTime = m_MissionTime - m_ICPSIgnitionTime;
+            if (coastTime > 5.0) {
+                m_ICPSSettled = true;
+                PRISMA_INFO("ICPS guidance settled at T+%.1fs", m_MissionTime);
+            }
+        }
+
+        if (m_BoosterSeparated && !m_TEIWindowOpened && altitude > 185000.0) {
+            m_TEIWindowOpened = true;
+            PRISMA_INFO("Artemis II translunar preparation window opened");
+        }
+
+        if (m_TEIWindowOpened && !m_OrionTakeover && m_MissionTime > 1200.0) {
+            m_OrionTakeover = true;
+            m_Vessel->ActivateNextStage();
+            PRISMA_INFO("Orion service module propulsion takeover (AJ10)");
+        }
+    }
+
     void ApplyArtemisAscentGuidance(double altitude, PhysicsBody& body) {
         if (altitude <= 1500.0 || altitude >= 90000.0 || m_BoosterSeparated) {
             return;
@@ -167,6 +215,13 @@ private:
         const double targetAngle = pitchFactor * (kPi / 2.0);
         body.SetOrientation({std::sin(targetAngle), std::cos(targetAngle), 0.0});
         body.SetAngularVelocity(0.0);
+
+        // Throttle back during Max-Q corridor.
+        if (altitude > 9500.0 && altitude < 15000.0) {
+            m_Vessel->SetStageThrottle(2, 0.72);
+        } else {
+            m_Vessel->SetStageThrottle(2, 1.0);
+        }
     }
 
     void ApplyCircularizationGuidance(const OrbitalElements& orbit, double altitude, PhysicsBody& body) {
@@ -184,12 +239,10 @@ private:
             body.SetOrientation(velocity.Normalized());
         }
 
-        for (const auto& part : m_Vessel->GetParts()) {
-            auto engine = std::dynamic_pointer_cast<EnginePart>(part);
-            if (!engine || !engine->IsActive()) {
-                continue;
-            }
-            engine->SetThrottle(nearApoapsis ? 1.0 : 0.0);
+        if (m_OrionTakeover) {
+            m_Vessel->SetStageThrottle(0, nearApoapsis ? 0.65 : 0.0);
+        } else {
+            m_Vessel->SetStageThrottle(1, nearApoapsis ? 1.0 : 0.15);
         }
     }
 
@@ -198,6 +251,7 @@ private:
         double ambientPressure,
         const OrbitalElements& orbit,
         const EngineStatus& status,
+        double dynamicPressure,
         double dt)
     {
         m_TelemetryTimer += dt;
@@ -216,10 +270,17 @@ private:
             1200.0,
             1.0);
 
+        const double s2Lh2 = m_Vessel->GetPropellantRemainingMass(1, PropellantType::LH2);
+        const double s2Lox = m_Vessel->GetPropellantRemainingMass(1, PropellantType::LOX);
+        const double smMmh = m_Vessel->GetPropellantRemainingMass(0, PropellantType::MMH);
+        const double smNto = m_Vessel->GetPropellantRemainingMass(0, PropellantType::NTO);
+
         PRISMA_TRACE(
-            "[ArtemisII] Alt=%7.0fm Vel=%6.0fm/s Mach=%.2f Ap=%7.0fkm Pe=%7.0fkm PredAp=%7.0fkm PredPe=%7.0fkm Mass=%7.0fkg Eng=%d Thrust=%8.0fkN mdot=%6.1fkg/s fuel=%6.1f ox=%6.1f p=%.0fPa",
+            "[ArtemisII] T=%6.1fs Alt=%7.0fm Vel=%6.0fm/s q=%7.0fPa Mach=%.2f Ap=%7.0fkm Pe=%7.0fkm PredAp=%7.0fkm PredPe=%7.0fkm Mass=%7.0fkg Eng=%d Thr=%8.0fkN ThrPct=%.0f%% mdot=%6.1f fuel=%6.1f ox=%6.1f S1LH2=%6.0f S1LOX=%6.0f S0MMH=%6.0f S0NTO=%6.0f p=%.0fPa",
+            m_MissionTime,
             altitude,
             speed,
+            dynamicPressure,
             mach,
             orbit.apoapsis / 1000.0,
             orbit.periapsis / 1000.0,
@@ -228,9 +289,14 @@ private:
             body.GetMass(),
             status.activeEngines,
             status.totalThrust / 1000.0,
+            status.maxThrottle * 100.0,
             status.totalMassFlow,
             status.totalFuelFlow,
             status.totalOxidizerFlow,
+            s2Lh2,
+            s2Lox,
+            smMmh,
+            smNto,
             ambientPressure);
 
         m_TelemetryTimer = 0.0;
@@ -242,6 +308,11 @@ private:
     std::shared_ptr<FuelTankPart> m_BoosterCoreLoxTank;
 
     bool m_BoosterSeparated = false;
+    bool m_TEIWindowOpened = false;
+    bool m_OrionTakeover = false;
+    bool m_ICPSSettled = false;
+    bool m_MaxQAnnounced = false;
+
     bool m_AutopilotCircularize = true;
     bool m_ManualControlEnabled = false;
     bool m_RCSState = false;
@@ -251,6 +322,10 @@ private:
     bool m_CPressedLastFrame = false;
     bool m_MPressedLastFrame = false;
 
+    double m_MissionTime = 0.0;
+    double m_ICPSIgnitionTime = 0.0;
+    double m_MaxQObserved = 0.0;
+    double m_MaxQTime = 0.0;
     double m_TelemetryTimer = 0.0;
 };
 

@@ -14,6 +14,7 @@ namespace DeepSpace {
         double totalMassFlow = 0.0;
         double totalFuelFlow = 0.0;
         double totalOxidizerFlow = 0.0;
+        double maxThrottle = 0.0;
     };
 
     class Vessel {
@@ -29,6 +30,45 @@ namespace DeepSpace {
         void ActivateNextStage() {
             m_Staging.ActivateNextStage();
             RecalculateMass();
+        }
+
+        void SetStageThrottle(int stage, double throttle) {
+            const double clamped = std::max(0.0, std::min(1.0, throttle));
+            for (const auto& part : m_Parts) {
+                auto engine = std::dynamic_pointer_cast<EnginePart>(part);
+                if (!engine || !engine->IsActive()) {
+                    continue;
+                }
+                if (engine->GetStage() == stage) {
+                    engine->SetThrottle(clamped);
+                }
+            }
+        }
+
+        int CountActiveEnginesInStage(int stage) const {
+            int count = 0;
+            for (const auto& part : m_Parts) {
+                auto engine = std::dynamic_pointer_cast<EnginePart>(part);
+                if (engine && engine->IsActive() && engine->GetStage() == stage) {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        double GetPropellantRemainingMass(int stage, PropellantType type) const {
+            double remaining = 0.0;
+            for (const auto& part : m_Parts) {
+                auto tank = std::dynamic_pointer_cast<FuelTankPart>(part);
+                if (!tank || tank->IsDecoupled() || tank->GetStage() != stage) {
+                    continue;
+                }
+                if (tank->GetPropellantType() != type) {
+                    continue;
+                }
+                remaining += tank->GetCurrentFuel();
+            }
+            return remaining;
         }
 
         void RecalculateMass() {
@@ -54,6 +94,8 @@ namespace DeepSpace {
                 if (!engine || !engine->IsActive() || engine->GetThrottle() <= 0.0) {
                     continue;
                 }
+
+                status.maxThrottle = std::max(status.maxThrottle, engine->GetThrottle());
 
                 const double requiredMass = engine->GetCurrentMassFlowRate() * dt;
                 if (requiredMass <= 0.0) {

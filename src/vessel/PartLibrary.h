@@ -64,6 +64,18 @@ namespace DeepSpace {
                 5.5);
         }
 
+        static std::shared_ptr<EnginePart> CreateAJ10_190() {
+            return std::make_shared<EnginePart>(
+                "AJ10-190",
+                112.0,
+                26700.0,
+                319.0,
+                319.0,
+                PropellantType::MMH,
+                PropellantType::NTO,
+                1.65);
+        }
+
         static std::shared_ptr<FuelTankPart> CreateFalcon9S1RP1Tank() {
             return std::make_shared<FuelTankPart>("F9 S1 RP-1 Tank", 12000.0, 115000.0, PropellantType::RP1);
         }
@@ -86,6 +98,14 @@ namespace DeepSpace {
 
         static std::shared_ptr<FuelTankPart> CreateArtemis2ICPSLOXTank() {
             return std::make_shared<FuelTankPart>("ICPS LOX Tank", 4100.0, 120000.0, PropellantType::LOX);
+        }
+
+        static std::shared_ptr<FuelTankPart> CreateArtemis2OrionMMHTank() {
+            return std::make_shared<FuelTankPart>("Orion MMH Tank", 850.0, 3200.0, PropellantType::MMH);
+        }
+
+        static std::shared_ptr<FuelTankPart> CreateArtemis2OrionNTOTank() {
+            return std::make_shared<FuelTankPart>("Orion NTO Tank", 900.0, 5300.0, PropellantType::NTO);
         }
     };
 }
