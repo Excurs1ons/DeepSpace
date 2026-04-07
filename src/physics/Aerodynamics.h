@@ -32,7 +32,8 @@ namespace DeepSpace {
             return baseCd;
         }
 
-        static void ApplyAerodynamics(PhysicsBody& body, const Atmosphere& atmosphere, double altitude) {
+        static void ApplyAerodynamics(PhysicsBody& body, const Atmosphere& atmosphere, double altitude,
+                                      double structuralDamage = 0.0, const Vec3d& asymmetricTorque = {0, 0, 0}) {
             const Vec3d velocity = body.GetVelocity();
             const double speed = velocity.Length();
             if (speed < 0.1 || altitude > 100000.0) return;
@@ -43,10 +44,14 @@ namespace DeepSpace {
             const double sos = GetSpeedOfSound(altitude);
             const double mach = GetMachNumber(speed, sos);
             const double cd = GetDragCoefficient(mach);
-            const double area = 10.7;
+            double area = 10.7;
+            
+            const double dragMultiplier = 1.0 + structuralDamage * 0.5;
+            const double areaReduction = structuralDamage * 0.3;
+            area *= (1.0 - areaReduction);
 
             const double q = 0.5 * density * speed * speed;
-            const double dragMag = q * cd * area;
+            const double dragMag = q * cd * area * dragMultiplier;
 
             const Vec3d velDir = velocity.Normalized();
             const Vec3d dragDir = velDir * -1.0;
@@ -60,6 +65,7 @@ namespace DeepSpace {
             if (aoa < 0.35) {
                 cl = aoa * 2.0 * 3.14159265358979323846;
             }
+            cl *= (1.0 - structuralDamage * 0.4);
 
             Vec3d liftDir(-dragDir.y, dragDir.x, 0.0);
             const double crossZ = orientation.x * velocity.y - orientation.y * velocity.x;
@@ -69,6 +75,10 @@ namespace DeepSpace {
 
             const Vec3d liftForce = liftDir * (q * cl * area * 0.1);
             body.AddForce(dragForce + liftForce);
+            
+            if (asymmetricTorque.Length() > 0.01) {
+                body.AddTorque3D(asymmetricTorque * structuralDamage);
+            }
         }
     };
 }
