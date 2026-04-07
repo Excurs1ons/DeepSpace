@@ -6,7 +6,6 @@
 #include "vessel/EnduranceStation.h"
 #include "vessel/PartLibrary.h"
 #include "vessel/Vessel.h"
-#include "environment/MicrometeoriteImpact.h"
 #include "environment/ThermalSimulation.h"
 #include "environment/DamageSystem.h"
 
@@ -24,7 +23,6 @@ public:
           m_FireTriggered(false),
           m_DepressTriggered(false),
           m_ExplosionTriggered(false),
-          m_MicrometeoriteImpact(),
           m_ThermalSimulation() {}
 
     void OnAttach() override {
@@ -54,10 +52,6 @@ public:
 
         body.AddForce(m_Earth.GetGravityAt(pos) * body.GetMass());
 
-        m_MicrometeoriteImpact.Update(dt, altitude, 10.7, 
-            m_TPSDamageLevel, m_StructuralDamageLevel, 
-            m_PropulsionDamageLevel, m_LifeSupportDamageLevel);
-        
         m_ThermalSimulation.Update(dt, speed, density, 1.0 - m_Vessel->GetTotalDamage());
         
         Aerodynamics::ApplyAerodynamics(body, m_Earth.GetAtmosphere(), altitude, 
@@ -503,13 +497,7 @@ private:
     double m_MaxQTime = 0.0;
     double m_TelemetryTimer = 0.0;
 
-    MicrometeoriteImpact m_MicrometeoriteImpact;
     ThermalSimulation m_ThermalSimulation;
-    
-    double m_TPSDamageLevel = 0.0;
-    double m_StructuralDamageLevel = 0.0;
-    double m_PropulsionDamageLevel = 0.0;
-    double m_LifeSupportDamageLevel = 0.0;
     
     DamageSystem m_DamageSystem;
 };
