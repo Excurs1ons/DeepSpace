@@ -8,6 +8,7 @@
 #include "vessel/Vessel.h"
 #include "environment/MicrometeoriteImpact.h"
 #include "environment/ThermalSimulation.h"
+#include "environment/DamageSystem.h"
 
 namespace DeepSpace {
 using Vec3d = Mock::Vec3d;
@@ -64,6 +65,8 @@ public:
 
         m_MissionTime += dt;
         HandleInput(dt);
+        
+        m_DamageSystem.Update(dt, *m_Vessel);
 
         if (!m_ManualControlEnabled) {
             ApplyArtemisAscentGuidance(altitude, body);
@@ -97,10 +100,20 @@ public:
 
         EmitTelemetry(altitude, ambientPressure, elements, status, dynamicPressure, dt);
         
-        if (m_Vessel->GetTotalDamage() > 0.1) {
-            MOCK_TRACE("[DAMAGE] Total=%.1f%% TPS=%.0fC Survival=%.0f%%", 
-                m_Vessel->GetTotalDamage() * 100,
-                m_ThermalSimulation.GetSurfaceTemperature() - 273.15,
+        double totalDamage = m_DamageSystem.GetDamageLevel(DamageType::TPS) + 
+                             m_DamageSystem.GetDamageLevel(DamageType::STRUCTURAL) +
+                             m_DamageSystem.GetDamageLevel(DamageType::PROPULSION) +
+                             m_DamageSystem.GetDamageLevel(DamageType::LIFESUPPORT);
+        totalDamage /= 4.0;
+        
+        if (totalDamage > 0.01) {
+            MOCK_WARN("[DAMAGE] Total=%.0f%% Health=%.0f%% TPS=%.0f%% Struct=%.0f%% Prop=%.0f%% Life=%.0f%% Survival=%.0f%%", 
+                totalDamage * 100,
+                m_DamageSystem.GetVesselHealth() * 100,
+                m_DamageSystem.GetDamageLevel(DamageType::TPS) * 100,
+                m_DamageSystem.GetDamageLevel(DamageType::STRUCTURAL) * 100,
+                m_DamageSystem.GetDamageLevel(DamageType::PROPULSION) * 100,
+                m_DamageSystem.GetDamageLevel(DamageType::LIFESUPPORT) * 100,
                 m_ThermalSimulation.GetCrewSurvivalProbability() * 100);
         }
     }
@@ -152,6 +165,28 @@ private:
 
     void HandleInput(double dt) {
         auto input = Mock::InputManager::Get();
+        
+        char cmd = input.GetCharInput();
+        if (cmd != 0) {
+            ProcessCommand(cmd);
+        }
+        
+        if (input.IsKeyJustPressed(Mock::KeyCode::T)) {
+            m_DamageSystem.TriggerDamage(DamageType::TPS, 0.3, *m_Vessel);
+            MOCK_WARN("DAMAGE: TPS impact! Thermal protection compromised!");
+        }
+        if (input.IsKeyJustPressed(Mock::KeyCode::S)) {
+            m_DamageSystem.TriggerDamage(DamageType::STRUCTURAL, 0.2, *m_Vessel);
+            MOCK_WARN("DAMAGE: Structural damage! Hull integrity reduced!");
+        }
+        if (input.IsKeyJustPressed(Mock::KeyCode::P)) {
+            m_DamageSystem.TriggerDamage(DamageType::PROPULSION, 0.25, *m_Vessel);
+            MOCK_WARN("DAMAGE: Propulsion hit! Engine performance degraded!");
+        }
+        if (input.IsKeyJustPressed(Mock::KeyCode::L)) {
+            m_DamageSystem.TriggerDamage(DamageType::LIFESUPPORT, 0.15, *m_Vessel);
+            MOCK_WARN("DAMAGE: Life support damaged! Cabin systems failing!");
+        }
 
         const bool rPressed = input.IsKeyPressed(Mock::KeyCode::R);
         const bool spacePressed = input.IsKeyPressed(Mock::KeyCode::Space);
@@ -215,19 +250,19 @@ private:
         }
 
         if (input.IsKeyPressed(Mock::KeyCode::T) && !m_TPressedLastFrame) {
-            m_Vessel->ApplyDamage(0.3, {0, 0, 0});
+            m_DamageSystem.TriggerDamage(DamageType::TPS, 0.3, *m_Vessel);
             MOCK_WARN("DAMAGE: TPS impact! Thermal protection compromised!");
         }
         if (input.IsKeyPressed(Mock::KeyCode::S) && !m_SDamagePressedLastFrame) {
-            m_Vessel->ApplyDamage(0.2, {1, 0, 0});
+            m_DamageSystem.TriggerDamage(DamageType::STRUCTURAL, 0.2, *m_Vessel);
             MOCK_WARN("DAMAGE: Structural damage! Hull integrity reduced!");
         }
         if (input.IsKeyPressed(Mock::KeyCode::P) && !m_PDamagePressedLastFrame) {
-            m_Vessel->ApplyDamage(0.25, {0, 1, 0});
+            m_DamageSystem.TriggerDamage(DamageType::PROPULSION, 0.25, *m_Vessel);
             MOCK_WARN("DAMAGE: Propulsion hit! Engine performance degraded!");
         }
         if (input.IsKeyPressed(Mock::KeyCode::L) && !m_LDamagePressedLastFrame) {
-            m_Vessel->ApplyDamage(0.15, {0, 0, 1});
+            m_DamageSystem.TriggerDamage(DamageType::LIFESUPPORT, 0.15, *m_Vessel);
             MOCK_WARN("DAMAGE: Life support damaged! Cabin systems failing!");
         }
 
@@ -254,6 +289,39 @@ private:
         }
 
         m_Vessel->GetRCS().Stabilize(m_Vessel->GetPhysicsBody(), dt);
+    }
+
+    void ProcessCommand(char cmd) {
+        switch (cmd) {
+            case 't':
+            case 'T':
+                m_DamageSystem.TriggerDamage(DamageType::TPS, 0.3, *m_Vessel);
+                MOCK_WARN("DAMAGE: TPS impact! Thermal protection compromised!");
+                break;
+            case 's':
+            case 'S':
+                m_DamageSystem.TriggerDamage(DamageType::STRUCTURAL, 0.2, *m_Vessel);
+                MOCK_WARN("DAMAGE: Structural damage! Hull integrity reduced!");
+                break;
+            case 'p':
+            case 'P':
+                m_DamageSystem.TriggerDamage(DamageType::PROPULSION, 0.25, *m_Vessel);
+                MOCK_WARN("DAMAGE: Propulsion hit! Engine performance degraded!");
+                break;
+            case 'l':
+            case 'L':
+                m_DamageSystem.TriggerDamage(DamageType::LIFESUPPORT, 0.15, *m_Vessel);
+                MOCK_WARN("DAMAGE: Life support damaged! Cabin systems failing!");
+                break;
+            case 'r':
+            case 'R':
+                m_DamageSystem.ApplyRepair(DamageType::TPS, 0.5);
+                m_DamageSystem.ApplyRepair(DamageType::STRUCTURAL, 0.5);
+                m_DamageSystem.ApplyRepair(DamageType::PROPULSION, 0.5);
+                m_DamageSystem.ApplyRepair(DamageType::LIFESUPPORT, 0.5);
+                MOCK_INFO("REPAIR: All systems partially restored");
+                break;
+        }
     }
 
     void ManageMissionEvents(double altitude, double dynamicPressure) {
@@ -442,6 +510,8 @@ private:
     double m_StructuralDamageLevel = 0.0;
     double m_PropulsionDamageLevel = 0.0;
     double m_LifeSupportDamageLevel = 0.0;
+    
+    DamageSystem m_DamageSystem;
 };
 
 class DeepSpaceApp : public Mock::Application {

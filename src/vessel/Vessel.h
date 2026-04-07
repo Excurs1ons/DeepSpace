@@ -2,8 +2,10 @@
 #include "Part.h"
 #include "RCS.h"
 #include "../physics/PhysicsBody.h"
+#include "../environment/DamageComponent.h"
 #include <map>
 #include <vector>
+#include <memory>
 
 namespace DeepSpace {
 
@@ -15,6 +17,11 @@ struct EngineStatus {
     double totalFuelFlow = 0.0;
     double totalOxidizerFlow = 0.0;
 };
+
+class TPSDamage;
+class StructuralDamage;
+class PropulsionDamage;
+class LifeSupportDamage;
 
 class Vessel {
 public:
@@ -28,6 +35,10 @@ public:
 
     RCS& GetRCS() { return m_RCS; }
     const RCS& GetRCS() const { return m_RCS; }
+
+    double GetTotalDamage() const;
+    void ApplyDamage(double amount, const Vec3d& location = {0, 0, 0});
+    void UpdateWithDamage(double dt, double ambientPressure);
 
     void AddPart(std::shared_ptr<Part> part) {
         m_Parts.push_back(part);
@@ -115,6 +126,17 @@ private:
     RCS m_RCS;
     std::vector<std::shared_ptr<Part>> m_Parts;
     int m_CurrentStage;
+    
+    double m_TPSDamage = 0.0;
+    double m_StructuralDamage = 0.0;
+    double m_PropulsionDamage = 0.0;
+    double m_LifeSupportDamage = 0.0;
+    double m_CabinTemperature = 293.15;
+    double m_CabinPressure = 101.325;
+    double m_OxygenLevel = 0.209;
+    double m_CO2Level = 0.0;
+
+    friend class DamageSystem;
 };
 
 }

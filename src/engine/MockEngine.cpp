@@ -5,6 +5,11 @@
 #include <thread>
 #include <sstream>
 #include <algorithm>
+#include <termios.h>
+#include <unistd.h>
+#include <sys/select.h>
+#include <fcntl.h>
+#include <poll.h>
 
 namespace Mock {
 
@@ -89,6 +94,10 @@ void InputManager::ClearJustPressed() {
     m_JustPressedKeys.clear();
 }
 
+void InputManager::ClearPressedKeys() {
+    m_PressedKeys.clear();
+}
+
 char InputManager::GetCharInput() {
     char c = m_CharInput;
     m_CharInput = 0;
@@ -145,6 +154,7 @@ int Engine::Run() {
         }
         
         m_InputManager.ClearJustPressed();
+        m_InputManager.ClearPressedKeys();
         
         if (m_TargetFPS > 0) {
             double targetFrameTime = 1.0 / m_TargetFPS;
@@ -195,6 +205,35 @@ void Engine::Update() {
 }
 
 void Engine::ProcessInput() {
+    struct pollfd pfd;
+    pfd.fd = STDIN_FILENO;
+    pfd.events = POLLIN;
+    
+    int ret = poll(&pfd, 1, 0);
+    if (ret > 0) {
+        char buffer[256];
+        ssize_t n = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
+        for (ssize_t i = 0; i < n; i++) {
+            char c = buffer[i];
+            if (c == '\r' || c == 0) continue;
+            m_InputManager.SetCharInput(c);
+            
+            KeyCode key = KeyCode::Escape;
+            if (c >= 'a' && c <= 'z') {
+                key = static_cast<KeyCode>(c - 'a' + 65);
+            } else if (c >= 'A' && c <= 'Z') {
+                key = static_cast<KeyCode>(c);
+            } else if (c >= '0' && c <= '9') {
+                key = static_cast<KeyCode>(c);
+            } else if (c == ' ') {
+                key = KeyCode::Space;
+            } else if (c == '\n') {
+                key = KeyCode::Enter;
+            }
+            
+            m_InputManager.SetKeyState(key, true);
+        }
+    }
 }
 
 std::shared_ptr<GameObject> Scene::FindGameObject(const std::string& name) {

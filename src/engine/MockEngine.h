@@ -95,6 +95,7 @@ public:
     bool IsKeyJustPressed(KeyCode key);
     void SetKeyState(KeyCode key, bool pressed);
     void ClearJustPressed();
+    void ClearPressedKeys();
     
     char GetCharInput();
     void SetCharInput(char c);

@@ -33,6 +33,13 @@ void DamageSystem::ApplyCascade(const CascadeEffect& effect, Vessel& vessel) {
     double currentTargetDamage = GetDamageFromVessel(effect.targetType, vessel);
     double newDamage = std::clamp(currentTargetDamage + effect.magnitude, 0.0, 1.0);
     SetDamageInVessel(effect.targetType, newDamage, vessel);
+    
+    switch (effect.targetType) {
+        case DamageType::TPS: m_TPSDamage = newDamage; break;
+        case DamageType::STRUCTURAL: m_StructuralDamage = newDamage; break;
+        case DamageType::PROPULSION: m_PropulsionDamage = newDamage; break;
+        case DamageType::LIFESUPPORT: m_LifeSupportDamage = newDamage; break;
+    }
 }
 
 void DamageSystem::UpdatePendingCascades(double dt, Vessel& vessel) {
@@ -73,6 +80,13 @@ void DamageSystem::TriggerDamage(DamageType type, double amount, Vessel& vessel)
     double currentDamage = GetDamageFromVessel(type, vessel);
     double newDamage = std::clamp(currentDamage + amount, 0.0, 1.0);
     SetDamageInVessel(type, newDamage, vessel);
+    
+    switch (type) {
+        case DamageType::TPS: m_TPSDamage = newDamage; break;
+        case DamageType::STRUCTURAL: m_StructuralDamage = newDamage; break;
+        case DamageType::PROPULSION: m_PropulsionDamage = newDamage; break;
+        case DamageType::LIFESUPPORT: m_LifeSupportDamage = newDamage; break;
+    }
 }
 
 double DamageSystem::GetVesselHealth() const {
@@ -86,12 +100,25 @@ double DamageSystem::GetVesselHealth() const {
     double healthSum = 0.0;
     double weightSum = 0.0;
     
-    for (const auto& [damageType, weight] : weights) {
-        healthSum += (1.0 - GetDamageFromVessel(damageType, Vessel(""))) * weight;
-        weightSum += weight;
-    }
+    double tpsHealth = 1.0 - m_TPSDamage;
+    double structHealth = 1.0 - m_StructuralDamage;
+    double propHealth = 1.0 - m_PropulsionDamage;
+    double lifeHealth = 1.0 - m_LifeSupportDamage;
+    
+    healthSum = tpsHealth * 0.1 + structHealth * 0.2 + propHealth * 0.3 + lifeHealth * 0.4;
+    weightSum = 1.0;
     
     return weightSum > 0.0 ? healthSum / weightSum : 1.0;
+}
+
+double DamageSystem::GetDamageLevel(DamageType type) const {
+    switch (type) {
+        case DamageType::TPS: return m_TPSDamage;
+        case DamageType::STRUCTURAL: return m_StructuralDamage;
+        case DamageType::PROPULSION: return m_PropulsionDamage;
+        case DamageType::LIFESUPPORT: return m_LifeSupportDamage;
+        default: return 0.0;
+    }
 }
 
 std::vector<DamageType> DamageSystem::GetCriticalSystems() const {

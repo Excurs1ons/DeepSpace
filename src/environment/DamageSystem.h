@@ -50,6 +50,11 @@ private:
     
     double m_TimeAccumulator = 0.0;
     std::mt19937 m_RandomEngine;
+    
+    double m_TPSDamage = 0.0;
+    double m_StructuralDamage = 0.0;
+    double m_PropulsionDamage = 0.0;
+    double m_LifeSupportDamage = 0.0;
 
     static constexpr double DAMAGE_THRESHOLD_CRITICAL = 0.8;
     static constexpr double DAMAGE_THRESHOLD_DESTROYED = 1.0;
