@@ -1,0 +1,22 @@
+{
+  "mission": "Artemis II Automated",
+  "duration_s": 463.9,
+  "outcome": "FAILURE",
+  "final_orbit": {
+    "apoapsis_km": 0,
+    "periapsis_km": 0
+  },
+  "target_orbit": {
+    "apoapsis_km": 185,
+    "periapsis_km": 180
+  },
+  "maxQ": {
+    "value_pa": 2.23917e+06,
+    "altitude_m": 87.7153,
+    "time_s": 463.8
+  },
+  "events": [
+    {"time":6,"name":"MaxQ_Pass","desc":"Dynamic pressure peak passed"},
+    {"time":463.9,"name":"Crash","desc":"Vehicle impacted surface"}
+  ]
+}

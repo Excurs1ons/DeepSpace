@@ -494,7 +494,7 @@ private:
         const double tolerance = 5000.0;
         
         if (!orbit.isBound) {
-            body.SetOrientation(velocity.Normalized());
+            body.SetOrientation(-velocity.Normalized());
             m_Vessel->SetStageThrottle(1, 1.0);
             return;
         }
@@ -513,11 +513,7 @@ private:
             return;
         }
         
-        // CRITICAL FIX: Raise PERIAPSIS FIRST using retrograde at apoapsis
-        // This is more efficient for small orbit raises
         if (!peInRange) {
-            // Fire RETROGRADE to raise periapsis
-            // Retrograde burn at ANY point raises the opposite side of the orbit
             body.SetOrientation(-velocity.Normalized());
             m_Vessel->SetStageThrottle(1, 1.0);
             return;
