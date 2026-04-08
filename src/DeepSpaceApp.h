@@ -490,46 +490,25 @@ private:
         
         const Vec3d velocity = body.GetVelocity();
         const Vec3d prograde = velocity.Normalized();
-        const Vec3d retrograde = -prograde;
         
         const double targetPe = m_Config.targetPe_km * 1000.0;
-        const double targetAp = m_Config.targetAp_km * 1000.0;
         const double tolerance = 5000.0;
         
         const double actualPe = orbit.periapsis > 0 ? orbit.periapsis : altitude;
-        const bool peInRange = actualPe >= targetPe - tolerance && actualPe <= targetPe + tolerance;
-        const bool apInRange = orbit.apoapsis >= targetAp - tolerance && orbit.apoapsis <= targetAp + tolerance;
+        const bool peInRange = actualPe >= targetPe - tolerance;
         
-        if (orbit.isBound && peInRange && apInRange) {
+        if (peInRange) {
             m_Vessel->SetStageThrottle(1, 0.0);
             if (!m_OrbitAchieved) {
                 m_OrbitAchieved = true;
-                MOCK_INFO("GUIDANCE: CIRCULARIZATION COMPLETE! Ap=%.0fkm Pe=%.0fkm",
-                    orbit.apoapsis / 1000.0, actualPe / 1000.0);
+                MOCK_INFO("GUIDANCE: CIRCULARIZATION COMPLETE! Pe=%.0fkm",
+                    actualPe / 1000.0);
             }
             return;
         }
         
-        if (!orbit.isBound) {
-            // Orbit not bound: fire retrograde to raise Pe (accept lower Ap for now)
-            body.SetOrientation(retrograde);
-            m_Vessel->SetStageThrottle(1, 1.0);
-            return;
-        }
-        
-        if (!peInRange) {
-            body.SetOrientation(retrograde);
-            m_Vessel->SetStageThrottle(1, 1.0);
-            return;
-        }
-        
-        if (!apInRange) {
-            body.SetOrientation(prograde);
-            m_Vessel->SetStageThrottle(1, 1.0);
-            return;
-        }
-        
-        m_Vessel->SetStageThrottle(1, 0.0);
+        body.SetOrientation(prograde);
+        m_Vessel->SetStageThrottle(1, 1.0);
     }
 
     void EmitTelemetry(

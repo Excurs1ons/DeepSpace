@@ -107,17 +107,23 @@ public:
                 const double fuelToConsume = mdot * engine->GetFuelMassFraction() * dt;
                 const double oxToConsume = mdot * engine->GetOxidizerMassFraction() * dt;
                 
+                bool fuelConsumed = true;
+                bool oxConsumed = true;
+                
                 for (auto& p : m_Parts) {
                     if (p->GetStage() != engine->GetStage() || p->IsDecoupled()) continue;
                     auto* tank = dynamic_cast<FuelTankPart*>(p.get());
                     if (tank) {
                         if (tank->GetPropellantType() == engine->GetFuelType() && fuelToConsume > 0) {
-                            tank->ConsumeFuel(fuelToConsume);
+                            if (!tank->ConsumeFuel(fuelToConsume)) fuelConsumed = false;
                         }
                         if (tank->GetPropellantType() == engine->GetOxidizerType() && oxToConsume > 0) {
-                            tank->ConsumeFuel(oxToConsume);
+                            if (!tank->ConsumeFuel(oxToConsume)) oxConsumed = false;
                         }
                     }
+                }
+                if (!fuelConsumed || !oxConsumed) {
+                    engine->SetActive(false);
                 }
             }
         }
