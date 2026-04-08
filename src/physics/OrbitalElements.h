@@ -120,5 +120,56 @@ namespace DeepSpace {
                 samples
             };
         }
+
+        static double CircularOrbitVelocity(double altitude, const Planet& planet) {
+            const double mu = Constants::G * planet.GetMass();
+            const double r = planet.GetRadius() + altitude;
+            if (r <= 0.0) return 0.0;
+            return std::sqrt(mu / r);
+        }
+
+        static double DeltaVToRaiseApoapsis(double currentApoapsis, double targetApoapsis, 
+                                            double periapsis, const Planet& planet) {
+            const double mu = Constants::G * planet.GetMass();
+            const double r_p = planet.GetRadius() + periapsis;
+            const double r_a = planet.GetRadius() + currentApoapsis;
+            const double r_a_target = planet.GetRadius() + targetApoapsis;
+            
+            if (r_p <= 0.0 || r_a <= 0.0 || r_a_target <= r_a) return 0.0;
+            
+            double v_p = std::sqrt(mu * (2.0 / r_p - 1.0 / ((r_a + r_p) / 2.0)));
+            double v_p_new = std::sqrt(mu * (2.0 / r_p - 1.0 / ((r_a_target + r_p) / 2.0)));
+            
+            return v_p_new - v_p;
+        }
+
+        static double TimeToApoapsis(const Vec3d& pos, const Vec3d& vel, const Planet& planet) {
+            const double mu = Constants::G * planet.GetMass();
+            const double r = pos.Length();
+            const double v2 = vel.LengthSquared();
+            
+            if (r <= planet.GetRadius()) return 0.0;
+            
+            const double specificEnergy = (v2 * 0.5) - (mu / r);
+            if (specificEnergy >= 0.0) return 0.0;
+            
+            const Vec3d hVec = Vec3d::Cross(pos, vel);
+            const double h = hVec.Length();
+            if (h <= 1e-9) return 0.0;
+            
+            const double a = -mu / (2.0 * specificEnergy);
+            const double period = 2.0 * M_PI * std::sqrt(a * a * a / mu);
+            
+            Vec3d rVec = pos.Normalized();
+            Vec3d vVec = vel.Normalized();
+            double cosNu = Vec3d::Dot(rVec, vVec);
+            Vec3d crossRV = Vec3d::Cross(rVec, vVec);
+            double sinNu = crossRV.Length() * ((crossRV.z >= 0) ? 1.0 : -1.0);
+            double nu = std::atan2(sinNu, cosNu);
+            if (nu < 0.0) nu += 2.0 * M_PI;
+            
+            double timeToApoapsis = nu > M_PI ? (2.0 * M_PI - nu) / (2.0 * M_PI) * period : nu / (2.0 * M_PI) * period;
+            return timeToApoapsis;
+        }
     };
 }

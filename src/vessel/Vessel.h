@@ -26,7 +26,7 @@ class LifeSupportDamage;
 class Vessel {
 public:
     explicit Vessel(const std::string& name)
-        : m_Name(name), m_RCS(100.0), m_CurrentStage(0) {}
+        : m_Name(name), m_RCS(100.0), m_CurrentStage(-1), m_HighestStage(-1) {}
 
     const std::string& GetName() const { return m_Name; }
 
@@ -43,14 +43,43 @@ public:
     void AddPart(std::shared_ptr<Part> part) {
         m_Parts.push_back(part);
     }
+    
+    const std::vector<std::shared_ptr<Part>>& GetParts() const { return m_Parts; }
 
     void ActivateNextStage() {
-        m_CurrentStage++;
-        for (auto& part : m_Parts) {
-            if (part->GetStage() == m_CurrentStage && !part->IsDecoupled()) {
-                part->SetActive(true);
+        if (m_HighestStage < 0) {
+            m_HighestStage = FindHighestStage();
+            m_CurrentStage = -1;
+        }
+        
+        if (m_CurrentStage >= 0) {
+            for (auto& part : m_Parts) {
+                if (part->GetStage() == m_CurrentStage && !part->IsDecoupled()) {
+                    part->SetDecoupled(true);
+                }
             }
         }
+        
+        m_CurrentStage++;
+        if (m_CurrentStage <= m_HighestStage) {
+            for (auto& part : m_Parts) {
+                if (part->GetStage() == m_CurrentStage && !part->IsDecoupled()) {
+                    part->SetActive(true);
+                    auto* engine = dynamic_cast<EnginePart*>(part.get());
+                    if (engine) {
+                        engine->SetThrottle(1.0);
+                    }
+                }
+            }
+        }
+    }
+    
+    int FindHighestStage() const {
+        int maxStage = -1;
+        for (const auto& part : m_Parts) {
+            maxStage = std::max(maxStage, part->GetStage());
+        }
+        return maxStage;
     }
 
     void SetStageThrottle(int stage, double throttle) {
@@ -64,18 +93,46 @@ public:
         }
     }
 
-    EngineStatus Update(double dt, double ambientPressure) {
+        EngineStatus Update(double dt, double ambientPressure) {
         EngineStatus status;
 
         if (dt <= 0.0) return status;
 
-        double totalMass = m_Body.GetMass();
+        for (auto& part : m_Parts) {
+            if (!part->IsActive() || part->IsDecoupled()) continue;
+
+            auto* engine = dynamic_cast<EnginePart*>(part.get());
+            if (engine && engine->GetThrottle() > 0.0) {
+                const double mdot = engine->GetCurrentMassFlowRate();
+                const double fuelToConsume = mdot * engine->GetFuelMassFraction() * dt;
+                const double oxToConsume = mdot * engine->GetOxidizerMassFraction() * dt;
+                
+                for (auto& p : m_Parts) {
+                    if (p->GetStage() != engine->GetStage() || p->IsDecoupled()) continue;
+                    auto* tank = dynamic_cast<FuelTankPart*>(p.get());
+                    if (tank) {
+                        if (tank->GetPropellantType() == engine->GetFuelType() && fuelToConsume > 0) {
+                            tank->ConsumeFuel(fuelToConsume);
+                        }
+                        if (tank->GetPropellantType() == engine->GetOxidizerType() && oxToConsume > 0) {
+                            tank->ConsumeFuel(oxToConsume);
+                        }
+                    }
+                }
+            }
+        }
+
+        double totalMass = 0.0;
+        for (const auto& part : m_Parts) {
+            if (!part->IsDecoupled()) {
+                totalMass += part->GetMass();
+            }
+        }
+        
         Vec3d totalThrust{0.0, 0.0, 0.0};
 
         for (auto& part : m_Parts) {
             if (!part->IsActive() || part->IsDecoupled()) continue;
-
-            totalMass += part->GetMass();
 
             auto* engine = dynamic_cast<EnginePart*>(part.get());
             if (engine && engine->GetThrottle() > 0.0) {
@@ -95,7 +152,7 @@ public:
 
         m_Body.AddForce(totalThrust);
         m_Body.SetMass(totalMass);
-
+        
         return status;
     }
 
@@ -113,19 +170,24 @@ public:
     }
 
     double GetMass() const {
-        double mass = 0.0;
-        for (const auto& part : m_Parts) {
-            mass += part->GetMass();
-        }
-        return mass;
+        return m_Body.GetMass();
     }
-
-private:
+    
+    void RecalculateMass() {
+        double totalMass = 0.0;
+        for (const auto& part : m_Parts) {
+            if (!part->IsDecoupled()) {
+                totalMass += part->GetMass();
+            }
+        }
+        m_Body.SetMass(totalMass);
+    }
     std::string m_Name;
     PhysicsBody m_Body;
     RCS m_RCS;
     std::vector<std::shared_ptr<Part>> m_Parts;
     int m_CurrentStage;
+    int m_HighestStage;
     
     double m_TPSDamage = 0.0;
     double m_StructuralDamage = 0.0;

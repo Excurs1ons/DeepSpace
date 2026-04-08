@@ -241,6 +241,7 @@ public:
     int Initialize();
     int Run();
     void Shutdown();
+    void Stop();
     
     // Layer 管理
     void PushLayer(std::unique_ptr<Layer> layer);

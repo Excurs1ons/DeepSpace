@@ -18,6 +18,7 @@ if(USE_MOCK_ENGINE)
     file(GLOB_RECURSE PHYSICS_SOURCES "src/physics/*.cpp" "src/physics/*.h")
     file(GLOB_RECURSE VESSEL_SOURCES "src/vessel/*.cpp" "src/vessel/*.h")
     file(GLOB_RECURSE ENVIRONMENT_SOURCES "src/environment/*.cpp" "src/environment/*.h")
+    file(GLOB_RECURSE MISSION_SOURCES "src/mission/*.cpp" "src/mission/*.h")
     
     set(ALL_SOURCES
         ${MOCK_SOURCES}
@@ -25,6 +26,7 @@ if(USE_MOCK_ENGINE)
         ${PHYSICS_SOURCES}
         ${VESSEL_SOURCES}
         ${ENVIRONMENT_SOURCES}
+        ${MISSION_SOURCES}
         src/main.cpp
     )
     

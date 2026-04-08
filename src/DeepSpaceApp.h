@@ -8,35 +8,59 @@
 #include "vessel/Vessel.h"
 #include "environment/ThermalSimulation.h"
 #include "environment/DamageSystem.h"
+#include "mission/MissionControl.h"
+#include "mission/Artemis2Mission.h"
+#include "mission/MissionConfig.h"
 
 namespace DeepSpace {
 using Vec3d = Mock::Vec3d;
 
 class SimulationLayer : public Mock::Layer {
 public:
-    SimulationLayer()
+    SimulationLayer(bool headless = false, const std::string& configPath = "missions/artemis2.conf")
         : Layer("SimulationLayer"),
           m_Earth("Earth", 5.9722e24, 6371000.0, Atmosphere(101325.0, 8500.0)),
           m_Vessel(std::make_shared<Vessel>("Artemis II Mission")),
+          m_MissionControl(*m_Vessel, m_Earth),
           m_EnduranceStation(nullptr),
           m_EnduranceMode(false),
           m_FireTriggered(false),
           m_DepressTriggered(false),
           m_ExplosionTriggered(false),
-          m_ThermalSimulation() {}
+          m_ThermalSimulation(),
+          m_HeadlessMode(headless),
+          m_MissionComplete(false),
+          m_Initialized(false) {
+        try {
+            m_Config = MissionConfig::Load(configPath);
+            MOCK_INFO("Config loaded from: %s", configPath.c_str());
+        } catch (const std::exception& e) {
+            MOCK_WARN("Failed to load config: %s, using defaults", e.what());
+        }
+        m_Vessel->RecalculateMass();
+    }
 
     void OnAttach() override {
+        if (m_Initialized) return;
+        m_Initialized = true;
+        
         MOCK_INFO("Simulation Layer Attached");
         
+        if (m_HeadlessMode) {
+            m_MissionControl.LoadMission(Artemis2Mission::CreateDefaultMission());
+        }
+        
         BuildArtemis2FlightPlan();
-
+        m_Vessel->RecalculateMass();
+        
         auto& body = m_Vessel->GetPhysicsBody();
         body.SetPosition({0.0, m_Earth.GetRadius(), 0.0});
         body.SetOrientation({0.0, 1.0, 0.0});
         body.SetInertia(12000000.0);
-
+        
         m_Vessel->ActivateNextStage();
         MOCK_INFO("T-0: Artemis II ascent stage ignition");
+        MOCK_INFO("Vessel mass: %.0f kg", m_Vessel->GetMass());
     }
 
     void OnUpdate(double dt) override {
@@ -58,9 +82,8 @@ public:
             m_Vessel->GetTotalDamage() * 0.2);
 
         m_MissionTime += dt;
-        HandleInput(dt);
         
-        AutoVerifyDamageSystem(dt);
+        const double dynamicPressure = 0.5 * density * speed * speed;
         
         m_DamageSystem.Update(dt, *m_Vessel);
 
@@ -68,24 +91,34 @@ public:
             ApplyArtemisAscentGuidance(altitude, body);
         }
 
-        const auto elements = OrbitalMechanics::CalculateElements(body.GetPosition(), body.GetVelocity(), m_Earth);
-        const double dynamicPressure = 0.5 * m_Earth.GetAtmosphere().GetDensity(altitude) * body.GetVelocity().LengthSquared();
-
         ManageMissionEvents(altitude, dynamicPressure);
-
-        if (m_AutopilotCircularize && m_BoosterSeparated) {
-            ApplyCircularizationGuidance(elements, altitude, body);
-        }
 
         const EngineStatus status = m_Vessel->Update(dt, ambientPressure);
         m_Vessel->UpdateWithDamage(dt, ambientPressure);
         body.Update(dt);
 
+        const auto elements = OrbitalMechanics::CalculateElements(body.GetPosition(), body.GetVelocity(), m_Earth);
+
+        if (m_AutopilotCircularize && m_BoosterSeparated) {
+            ApplyCircularizationGuidance(elements, altitude, body);
+        }
+
+        if (m_HeadlessMode) {
+            m_MissionControl.Update(dt, status);
+            if (m_MissionControl.GetOutcome() != MissionOutcome::IN_PROGRESS) {
+                m_MissionComplete = true;
+                FinalizeMission();
+            }
+        } else {
+            HandleInput(dt);
+            AutoVerifyDamageSystem(dt);
+        }
+
         if (m_Earth.GetAltitude(body.GetPosition()) < 0.0) {
             body.SetPosition(body.GetPosition().Normalized() * m_Earth.GetRadius());
             body.SetVelocity({0.0, 0.0, 0.0});
         }
-
+        
         if (m_EnduranceStation) {
             m_EnduranceStation->Update(dt);
 
@@ -95,37 +128,35 @@ public:
         }
 
         EmitTelemetry(altitude, ambientPressure, elements, status, dynamicPressure, dt);
-        
-        double totalDamage = m_DamageSystem.GetDamageLevel(DamageType::TPS) + 
-                             m_DamageSystem.GetDamageLevel(DamageType::STRUCTURAL) +
-                             m_DamageSystem.GetDamageLevel(DamageType::PROPULSION) +
-                             m_DamageSystem.GetDamageLevel(DamageType::LIFESUPPORT);
-        totalDamage /= 4.0;
-        
-        if (totalDamage > 0.01) {
-            MOCK_WARN("[DAMAGE] Total=%.0f%% Health=%.0f%% TPS=%.0f%% Struct=%.0f%% Prop=%.0f%% Life=%.0f%% Survival=%.0f%%", 
-                totalDamage * 100,
-                m_DamageSystem.GetVesselHealth() * 100,
-                m_DamageSystem.GetDamageLevel(DamageType::TPS) * 100,
-                m_DamageSystem.GetDamageLevel(DamageType::STRUCTURAL) * 100,
-                m_DamageSystem.GetDamageLevel(DamageType::PROPULSION) * 100,
-                m_DamageSystem.GetDamageLevel(DamageType::LIFESUPPORT) * 100,
-                m_ThermalSimulation.GetCrewSurvivalProbability() * 100);
-        }
     }
 
 private:
     void BuildArtemis2FlightPlan() {
-        auto orionMmh = PartLibrary::CreateArtemis2OrionMMHTank();
-        auto orionNto = PartLibrary::CreateArtemis2OrionNTOTank();
-        auto orionAj10 = PartLibrary::CreateAJ10_190();
-        orionMmh->SetStage(0);
-        orionNto->SetStage(0);
-        orionAj10->SetStage(0);
+        MOCK_INFO("BuildArtemis2FlightPlan: ICPS thrust=%.0f N, Vacuum Isp=%.0f s", 
+            m_Config.rl10.thrust_N, m_Config.rl10.vacuumIsp_s);
+        
+        auto orionMmh = PartLibrary::CreateArtemis2OrionMMHTank(
+            m_Config.orionMMH.dryMass_kg, m_Config.orionMMH.fuelMass_kg);
+        auto orionNto = PartLibrary::CreateArtemis2OrionNTOTank(
+            m_Config.orionNTO.dryMass_kg, m_Config.orionNTO.fuelMass_kg);
+        auto orionAj10 = PartLibrary::CreateAJ10_190(
+            m_Config.aj10.thrust_N,
+            m_Config.aj10.seaLevelIsp_s,
+            m_Config.aj10.vacuumIsp_s,
+            m_Config.aj10.OF_ratio);
+        orionMmh->SetStage(2);
+        orionNto->SetStage(2);
+        orionAj10->SetStage(2);
 
-        auto icpsLh2 = PartLibrary::CreateArtemis2ICPSLH2Tank();
-        auto icpsLox = PartLibrary::CreateArtemis2ICPSLOXTank();
-        auto icpsEngine = PartLibrary::CreateRL10B2();
+        auto icpsLh2 = PartLibrary::CreateArtemis2ICPSLH2Tank(
+            m_Config.icpsLH2.dryMass_kg, m_Config.icpsLH2.fuelMass_kg);
+        auto icpsLox = PartLibrary::CreateArtemis2ICPSLOXTank(
+            m_Config.icpsLOX.dryMass_kg, m_Config.icpsLOX.fuelMass_kg);
+        auto icpsEngine = PartLibrary::CreateRL10B2(
+            m_Config.rl10.thrust_N,
+            m_Config.rl10.seaLevelIsp_s,
+            m_Config.rl10.vacuumIsp_s,
+            m_Config.rl10.OF_ratio);
         auto interstage = std::make_shared<DecouplerPart>("ICPS Interstage", 600.0);
 
         icpsLh2->SetStage(1);
@@ -142,17 +173,23 @@ private:
         m_Vessel->AddPart(icpsEngine);
         m_Vessel->AddPart(interstage);
 
-        auto coreRp1 = PartLibrary::CreateFalcon9S1RP1Tank();
-        auto coreLox = PartLibrary::CreateFalcon9S1LOXTank();
-        coreRp1->SetStage(2);
-        coreLox->SetStage(2);
+        auto coreRp1 = PartLibrary::CreateFalcon9S1RP1Tank(
+            m_Config.coreRP1.dryMass_kg, m_Config.coreRP1.fuelMass_kg);
+        auto coreLox = PartLibrary::CreateFalcon9S1LOXTank(
+            m_Config.coreLOX.dryMass_kg, m_Config.coreLOX.fuelMass_kg);
+        coreRp1->SetStage(0);
+        coreLox->SetStage(0);
         m_Vessel->AddPart(coreRp1);
         m_Vessel->AddPart(coreLox);
         m_BoosterCoreLoxTank = coreLox;
 
-        for (int i = 0; i < 4; ++i) {
-            auto engine = PartLibrary::CreateMerlin1D();
-            engine->SetStage(2);
+        for (int i = 0; i < 9; ++i) {
+            auto engine = PartLibrary::CreateMerlin1D(
+                m_Config.merlin.thrust_N,
+                m_Config.merlin.seaLevelIsp_s,
+                m_Config.merlin.vacuumIsp_s,
+                m_Config.merlin.OF_ratio);
+            engine->SetStage(0);
             m_Vessel->AddPart(engine);
         }
 
@@ -383,43 +420,63 @@ private:
         }
 
         if (!m_BoosterSeparated && m_BoosterCoreLoxTank && m_BoosterCoreLoxTank->GetCurrentFuel() <= 0.0) {
-            MOCK_INFO("Booster/core depletion - staging to ICPS");
+            MOCK_INFO("Booster/core depletion - staging to ICPS (LOX=%.0fkg, time=%.1fs)", 
+                m_BoosterCoreLoxTank->GetCurrentFuel(), m_MissionTime);
             m_Vessel->ActivateNextStage();
             m_BoosterSeparated = true;
+            m_CircularizingBurnStarted = false;
             m_Vessel->GetRCS().SetEnabled(true);
             m_RCSState = true;
             m_ICPSIgnitionTime = m_MissionTime;
         }
 
         if (m_BoosterSeparated && !m_ICPSSettled) {
-            const double coastTime = m_MissionTime - m_ICPSIgnitionTime;
-            if (coastTime > 5.0) {
-                m_ICPSSettled = true;
-                MOCK_INFO("ICPS guidance settled at T+%.1fs", m_MissionTime);
-            }
+            m_ICPSSettled = true;
+            MOCK_INFO("ICPS guidance active at T+%.1fs", m_MissionTime);
         }
 
         if (m_BoosterSeparated && !m_TEIWindowOpened && altitude > 185000.0) {
             m_TEIWindowOpened = true;
             MOCK_INFO("Artemis II translunar preparation window opened");
         }
+    }
 
-        if (m_TEIWindowOpened && !m_OrionTakeover && m_MissionTime > 1200.0) {
-            m_OrionTakeover = true;
-            m_Vessel->ActivateNextStage();
-            MOCK_INFO("Orion service module propulsion takeover (AJ10)");
-        }
+    void FinalizeMission() {
+        const auto& summary = m_MissionControl.GetSummary();
+        const auto outcome = m_MissionControl.GetOutcome();
+        
+        MOCK_INFO("========================================");
+        MOCK_INFO("MISSION %s", outcome == MissionOutcome::SUCCESS ? "SUCCESS" : 
+                          outcome == MissionOutcome::FAILURE ? "FAILED" :
+                          outcome == MissionOutcome::ABORT ? "ABORTED" : "TIMEOUT");
+        MOCK_INFO("========================================");
+        MOCK_INFO("Duration: %.1f seconds", summary.duration_s);
+        MOCK_INFO("Final Orbit: Ap=%.0fkm, Pe=%.0fkm", 
+                  summary.finalOrbit.apoapsis_m / 1000.0,
+                  summary.finalOrbit.periapsis_m / 1000.0);
+        MOCK_INFO("Target Orbit: Ap=%.0fkm, Pe=%.0fkm",
+                  summary.targetOrbit.apoapsis_m / 1000.0,
+                  summary.targetOrbit.periapsis_m / 1000.0);
+        MOCK_INFO("Max-Q: %.0f Pa at %.0fm altitude", summary.maxQ_pa, summary.maxQAltitude_m);
+        MOCK_INFO("Events triggered: %zu", summary.allEvents.size());
+        
+        m_MissionControl.ExportCSV("artemis2_telemetry.csv");
+        m_MissionControl.ExportSummary("artemis2_summary.json");
+        MOCK_INFO("Telemetry exported to artemis2_telemetry.csv and artemis2_summary.json");
     }
 
     void ApplyArtemisAscentGuidance(double altitude, PhysicsBody& body) {
-        if (altitude <= 1500.0 || altitude >= 90000.0 || m_BoosterSeparated) {
+        const double pitchStartAlt = m_Config.guidance.pitchStartAlt_m;
+        const double pitchEndAlt = m_Config.guidance.pitchEndAlt_m;
+        
+        if (altitude <= pitchStartAlt || altitude >= pitchEndAlt || m_BoosterSeparated) {
             return;
         }
 
-        const double pitchFactor = (altitude - 1500.0) / 88500.0;
-        const double targetAngle = pitchFactor * (3.14159265358979323846 / 2.0);
+        const double pitchFactor = std::pow((altitude - pitchStartAlt) / (pitchEndAlt - pitchStartAlt), 0.7);
+        const double targetAngle = pitchFactor * (M_PI / 2.0);
+        
         body.SetOrientation({std::sin(targetAngle), std::cos(targetAngle), 0.0});
-        body.SetAngularVelocity(0.0);
 
         if (altitude > 9500.0 && altitude < 15000.0) {
             m_Vessel->SetStageThrottle(2, 0.72);
@@ -429,25 +486,50 @@ private:
     }
 
     void ApplyCircularizationGuidance(const OrbitalElements& orbit, double altitude, PhysicsBody& body) {
-        if (!orbit.isBound) {
-            return;
-        }
-        if (altitude <= 120000.0 || orbit.apoapsis >= 185000.0) {
-            return;
-        }
-
-        const double distToAp = std::abs(altitude - orbit.apoapsis);
-        const bool nearApoapsis = distToAp < 4000.0;
+        if (!m_BoosterSeparated) return;
+        
         const Vec3d velocity = body.GetVelocity();
-        if (velocity.Length() > 1e-3) {
+        const double targetPe = m_Config.targetPe_km * 1000.0;
+        const double targetAp = m_Config.targetAp_km * 1000.0;
+        const double tolerance = 5000.0;
+        
+        if (!orbit.isBound) {
             body.SetOrientation(velocity.Normalized());
+            m_Vessel->SetStageThrottle(1, 1.0);
+            return;
         }
-
-        if (m_OrionTakeover) {
-            m_Vessel->SetStageThrottle(0, nearApoapsis ? 0.65 : 0.0);
-        } else {
-            m_Vessel->SetStageThrottle(1, nearApoapsis ? 1.0 : 0.15);
+        
+        const double actualPe = orbit.periapsis > 0 ? orbit.periapsis : altitude;
+        const bool peInRange = actualPe >= targetPe - tolerance && actualPe <= targetPe + tolerance;
+        const bool apInRange = orbit.apoapsis >= targetAp - tolerance && orbit.apoapsis <= targetAp + tolerance;
+        
+        if (peInRange && apInRange) {
+            m_Vessel->SetStageThrottle(1, 0.0);
+            if (!m_OrbitAchieved) {
+                m_OrbitAchieved = true;
+                MOCK_INFO("GUIDANCE: CIRCULARIZATION COMPLETE! Ap=%.0fkm Pe=%.0fkm",
+                    orbit.apoapsis / 1000.0, actualPe / 1000.0);
+            }
+            return;
         }
+        
+        // CRITICAL FIX: Raise PERIAPSIS FIRST using retrograde at apoapsis
+        // This is more efficient for small orbit raises
+        if (!peInRange) {
+            // Fire RETROGRADE to raise periapsis
+            // Retrograde burn at ANY point raises the opposite side of the orbit
+            body.SetOrientation(-velocity.Normalized());
+            m_Vessel->SetStageThrottle(1, 1.0);
+            return;
+        }
+        
+        if (!apInRange) {
+            body.SetOrientation(velocity.Normalized());
+            m_Vessel->SetStageThrottle(1, 1.0);
+            return;
+        }
+        
+        m_Vessel->SetStageThrottle(1, 0.0);
     }
 
     void EmitTelemetry(
@@ -479,7 +561,7 @@ private:
         const double smMmh = m_Vessel->GetPropellantRemainingMass(0, PropellantType::MMH);
         const double smNto = m_Vessel->GetPropellantRemainingMass(0, PropellantType::NTO);
 
-        MOCK_TRACE(
+        MOCK_INFO(
             "[ArtemisII] T=%6.1fs Alt=%7.0fm Vel=%6.0fm/s q=%7.0fPa Mach=%.2f Ap=%7.0fkm Pe=%7.0fkm PredAp=%7.0fkm PredPe=%7.0fkm Mass=%7.0fkg Eng=%d Thr=%8.0fkN ThrPct=%.0f%% mdot=%6.1f fuel=%6.1f ox=%6.1f S1LH2=%6.0f S1LOX=%6.0f S0MMH=%6.0f S0NTO=%6.0f p=%.0fPa",
             m_MissionTime,
             altitude,
@@ -518,12 +600,16 @@ private:
     std::shared_ptr<FuelTankPart> m_BoosterCoreLoxTank;
     std::shared_ptr<EnduranceStation> m_EnduranceStation;
     std::vector<std::shared_ptr<Vessel>> m_Spacecraft;
+    
+    MissionControl m_MissionControl;
 
     bool m_BoosterSeparated = false;
     bool m_TEIWindowOpened = false;
     bool m_OrionTakeover = false;
     bool m_ICPSSettled = false;
     bool m_MaxQAnnounced = false;
+    bool m_OrbitAchieved = false;
+    bool m_CircularizingBurnStarted = false;
 
     bool m_AutopilotCircularize = true;
     bool m_ManualControlEnabled = false;
@@ -548,6 +634,47 @@ private:
     double m_MaxQObserved = 0.0;
     double m_MaxQTime = 0.0;
     double m_TelemetryTimer = 0.0;
+    
+    bool m_HeadlessMode = false;
+    bool m_MissionComplete = false;
+    bool m_Initialized = false;
+    MissionConfig m_Config;
+    
+public:
+    bool IsMissionComplete() const { return m_MissionComplete; }
+    double GetCurrentAltitude() const {
+        return m_Earth.GetAltitude(m_Vessel->GetPhysicsBody().GetPosition());
+    }
+    double GetCurrentVelocity() const {
+        return m_Vessel->GetPhysicsBody().GetVelocity().Length();
+    }
+    double GetVesselMass() const {
+        return m_Vessel->GetMass();
+    }
+    double GetTotalThrust() const {
+        double thrust = 0.0;
+        for (const auto& part : m_Vessel->GetParts()) {
+            auto* engine = dynamic_cast<EnginePart*>(part.get());
+            if (engine && engine->IsActive() && engine->GetThrottle() > 0.0) {
+                double ambient = m_Earth.GetAtmosphere().GetPressure(GetCurrentAltitude());
+                thrust += engine->GetThrust(ambient);
+            }
+        }
+        return thrust;
+    }
+    Vec3d GetPosition() const {
+        return m_Vessel->GetPhysicsBody().GetPosition();
+    }
+    Vec3d GetVelocity() const {
+        return m_Vessel->GetPhysicsBody().GetVelocity();
+    }
+    double GetNetForce() const {
+        Vec3d force = m_Earth.GetGravityAt(GetPosition()) * GetVesselMass();
+        force += m_Vessel->GetPhysicsBody().GetAccumulatedForce();
+        return force.y;
+    }
+    
+private:
 
     ThermalSimulation m_ThermalSimulation;
     
@@ -556,10 +683,11 @@ private:
 
 class DeepSpaceApp : public Mock::Application {
 public:
-    DeepSpaceApp() = default;
+    explicit DeepSpaceApp(bool headless = false) : m_HeadlessDefault(headless) {}
 
     int OnInitialize() override {
-        PushLayer(new SimulationLayer());
+        m_SimulationLayer = new SimulationLayer(m_HeadlessDefault);
+        PushLayer(m_SimulationLayer);
         return 0;
     }
 
@@ -574,11 +702,66 @@ public:
         for (auto& layer : m_Layers) {
             engine.PushLayer(std::move(layer));
         }
-        engine.Run();
+        if (m_HeadlessDefault) {
+            RunHeadless(engine);
+        } else {
+            engine.Run();
+        }
+    }
+    
+    void RunHeadless(Mock::Engine& engine) {
+        if (!m_SimulationLayer) {
+            MOCK_ERROR("RunHeadless: SimulationLayer not found!");
+            return;
+        }
+        
+        MOCK_INFO("RunHeadless: Initializing simulation layer...");
+        m_SimulationLayer->OnAttach();
+        
+        const double fixedDt = 0.1;
+        double totalSimTime = 0.0;
+        const double maxSimTime = 7200.0;
+        double lastReportTime = 0.0;
+        const double reportInterval = 10.0;
+        
+        MOCK_INFO("RunHeadless: Starting simulation (max %.0fs, dt=%.1fs)", maxSimTime, fixedDt);
+        
+        int loopCount = 0;
+        bool running = true;
+        while (running && totalSimTime < maxSimTime) {
+            totalSimTime += fixedDt;
+            loopCount++;
+            
+            m_SimulationLayer->OnUpdate(fixedDt);
+            
+            if (loopCount <= 3) {
+                double altitude = m_SimulationLayer->GetCurrentAltitude();
+                double velocity = m_SimulationLayer->GetCurrentVelocity();
+                MOCK_TRACE("Headless T=%.1fs: Alt=%.0fm Vel=%.0fm/s", totalSimTime, altitude, velocity);
+            }
+            
+            if (totalSimTime - lastReportTime >= reportInterval) {
+                lastReportTime = totalSimTime;
+                double altitude = m_SimulationLayer->GetCurrentAltitude();
+                double velocity = m_SimulationLayer->GetCurrentVelocity();
+                MOCK_INFO("[T=%.0fs] Alt=%.0fm Vel=%.0fm/s", totalSimTime, altitude, velocity);
+            }
+            
+            if (m_SimulationLayer->IsMissionComplete()) {
+                MOCK_INFO("RunHeadless: Mission complete at T=%.1fs", totalSimTime);
+                running = false;
+            }
+        }
+        
+        if (totalSimTime >= maxSimTime) {
+            MOCK_INFO("RunHeadless: Max simulation time reached (%.1fs)", totalSimTime);
+        }
     }
 
 private:
     std::vector<std::unique_ptr<Mock::Layer>> m_Layers;
+    SimulationLayer* m_SimulationLayer = nullptr;
+    bool m_HeadlessDefault = false;
 };
 
 }

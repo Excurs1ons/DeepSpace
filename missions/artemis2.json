@@ -1,0 +1,95 @@
+{
+  "mission": {
+    "name": "Artemis II",
+    "description": "Automated Earth orbit mission",
+    "targetOrbit": {
+      "apoapsis_km": 185.0,
+      "periapsis_km": 180.0
+    },
+    "maxDuration_s": 7200.0,
+    "reportInterval_s": 10.0
+  },
+  "guidance": {
+    "ascent": {
+      "pitchStartAlt_m": 2000.0,
+      "pitchEndAlt_m": 20000.0
+    },
+    "circularization": {
+      "apoapsisTolerance_m": 10000.0,
+      "periapsisTolerance_m": 10000.0
+    }
+  },
+  "staging": {
+    "coreSeparation": {
+      "trigger": "fuel_depletion",
+      "tank": "F9 S1 LOX Tank"
+    }
+  },
+  "engines": {
+    "merlin1D": {
+      "name": "Merlin 1D",
+      "seaLevelIsp_s": 282.0,
+      "vacuumIsp_s": 311.0,
+      "thrust_N": 3000000.0,
+      "fuelRatio": 0.28,
+      "oxidizerRatio": 0.72,
+      "fuelRatioActual": 2.56
+    },
+    "rl10B2": {
+      "name": "RL10B-2",
+      "seaLevelIsp_s": 301.0,
+      "vacuumIsp_s": 465.0,
+      "thrust_N": 15000000.0,
+      "fuelRatio": 0.154,
+      "oxidizerRatio": 0.846,
+      "fuelRatioActual": 5.5
+    },
+    "aj10_190": {
+      "name": "AJ10-190",
+      "seaLevelIsp_s": 112.0,
+      "vacuumIsp_s": 319.0,
+      "thrust_N": 267000.0,
+      "fuelRatio": 0.377,
+      "oxidizerRatio": 0.623,
+      "fuelRatioActual": 1.65
+    }
+  },
+  "tanks": {
+    "coreRP1": {
+      "name": "F9 S1 RP-1 Tank",
+      "dryMass_kg": 12000.0,
+      "fuelMass_kg": 70000.0,
+      "propellant": "RP1"
+    },
+    "coreLOX": {
+      "name": "F9 S1 LOX Tank",
+      "dryMass_kg": 13000.0,
+      "fuelMass_kg": 70000.0,
+      "propellant": "LOX"
+    },
+    "icpsLH2": {
+      "name": "ICPS LH2 Tank",
+      "dryMass_kg": 3200.0,
+      "fuelMass_kg": 150000.0,
+      "propellant": "LH2"
+    },
+    "icpsLOX": {
+      "name": "ICPS LOX Tank",
+      "dryMass_kg": 4100.0,
+      "fuelMass_kg": 825000.0,
+      "propellant": "LOX"
+    },
+    "orionMMH": {
+      "name": "Orion MMH Tank",
+      "dryMass_kg": 850.0,
+      "fuelMass_kg": 3200.0,
+      "propellant": "MMH"
+    },
+    "orionNTO": {
+      "name": "Orion NTO Tank",
+      "dryMass_kg": 900.0,
+      "fuelMass_kg": 5300.0,
+      "propellant": "NTO"
+    }
+  }
+}

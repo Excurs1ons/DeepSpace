@@ -22,6 +22,8 @@ using Vec3d = Mock::Vec3d;
         void AddForce(const Vec3d& force) {
             m_AccumulatedForce += force;
         }
+        
+        Vec3d GetAccumulatedForce() const { return m_AccumulatedForce; }
 
         void AddTorque(double torque) {
             m_AccumulatedTorque.z += torque;
@@ -32,7 +34,9 @@ using Vec3d = Mock::Vec3d;
         }
 
         void Update(double dt) {
-            if (m_Mass <= 0.0 || dt <= 0.0) return;
+            if (m_Mass <= 0.0 || dt <= 0.0) {
+                return;
+            }
 
             const Vec3d acceleration = m_AccumulatedForce / m_Mass;
             m_Velocity += acceleration * dt;
@@ -59,7 +63,8 @@ using Vec3d = Mock::Vec3d;
         const Vec3d& GetVelocity() const { return m_Velocity; }
 
         void SetOrientation(const Vec3d& dir) {
-            m_Orientation = Quaternion::FromAxisAngle({0, 0, 1}, std::atan2(dir.x, dir.y));
+            double angle = -std::atan2(dir.x, dir.y);
+            m_Orientation = Quaternion::FromAxisAngle({0, 0, 1}, angle);
         }
         const Quaternion& GetOrientation() const { return m_Orientation; }
 

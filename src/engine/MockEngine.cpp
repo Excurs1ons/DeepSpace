@@ -180,6 +180,10 @@ void Engine::Shutdown() {
     m_Logger.Log(LogLevel::Info, "Engine", "Mock Engine shutdown complete");
 }
 
+void Engine::Stop() {
+    m_Running = false;
+}
+
 void Engine::PushLayer(std::unique_ptr<Layer> layer) {
     layer->OnAttach();
     m_Layers.push_back(std::move(layer));
