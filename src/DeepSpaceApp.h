@@ -132,8 +132,8 @@ public:
 
 private:
     void BuildArtemis2FlightPlan() {
-        MOCK_INFO("BuildArtemis2FlightPlan: ICPS thrust=%.0f N, Vacuum Isp=%.0f s", 
-            m_Config.rl10.thrust_N, m_Config.rl10.vacuumIsp_s);
+        MOCK_INFO("BuildArtemis2FlightPlan: ICPS thrust=%.0f N, Vacuum Isp=%.0f s, Merlin thrust=%.0f N", 
+            m_Config.rl10.thrust_N, m_Config.rl10.vacuumIsp_s, m_Config.merlin.thrust_N);
         
         auto orionMmh = PartLibrary::CreateArtemis2OrionMMHTank(
             m_Config.orionMMH.dryMass_kg, m_Config.orionMMH.fuelMass_kg);
@@ -183,7 +183,7 @@ private:
         m_Vessel->AddPart(coreLox);
         m_BoosterCoreLoxTank = coreLox;
 
-        for (int i = 0; i < 9; ++i) {
+        for (int i = 0; i < 13; ++i) {
             auto engine = PartLibrary::CreateMerlin1D(
                 m_Config.merlin.thrust_N,
                 m_Config.merlin.seaLevelIsp_s,
@@ -489,21 +489,18 @@ private:
         if (!m_BoosterSeparated) return;
         
         const Vec3d velocity = body.GetVelocity();
+        const Vec3d prograde = velocity.Normalized();
+        const Vec3d retrograde = -prograde;
+        
         const double targetPe = m_Config.targetPe_km * 1000.0;
         const double targetAp = m_Config.targetAp_km * 1000.0;
         const double tolerance = 5000.0;
-        
-        if (!orbit.isBound) {
-            body.SetOrientation(-velocity.Normalized());
-            m_Vessel->SetStageThrottle(1, 1.0);
-            return;
-        }
         
         const double actualPe = orbit.periapsis > 0 ? orbit.periapsis : altitude;
         const bool peInRange = actualPe >= targetPe - tolerance && actualPe <= targetPe + tolerance;
         const bool apInRange = orbit.apoapsis >= targetAp - tolerance && orbit.apoapsis <= targetAp + tolerance;
         
-        if (peInRange && apInRange) {
+        if (orbit.isBound && peInRange && apInRange) {
             m_Vessel->SetStageThrottle(1, 0.0);
             if (!m_OrbitAchieved) {
                 m_OrbitAchieved = true;
@@ -513,14 +510,21 @@ private:
             return;
         }
         
+        if (!orbit.isBound) {
+            // Orbit not bound: fire retrograde to raise Pe (accept lower Ap for now)
+            body.SetOrientation(retrograde);
+            m_Vessel->SetStageThrottle(1, 1.0);
+            return;
+        }
+        
         if (!peInRange) {
-            body.SetOrientation(-velocity.Normalized());
+            body.SetOrientation(retrograde);
             m_Vessel->SetStageThrottle(1, 1.0);
             return;
         }
         
         if (!apInRange) {
-            body.SetOrientation(velocity.Normalized());
+            body.SetOrientation(prograde);
             m_Vessel->SetStageThrottle(1, 1.0);
             return;
         }
