@@ -60,6 +60,8 @@ public:
         m_MissionTime += dt;
         HandleInput(dt);
         
+        AutoVerifyDamageSystem(dt);
+        
         m_DamageSystem.Update(dt, *m_Vessel);
 
         if (!m_ManualControlEnabled) {
@@ -283,6 +285,56 @@ private:
         }
 
         m_Vessel->GetRCS().Stabilize(m_Vessel->GetPhysicsBody(), dt);
+    }
+
+    void AutoVerifyDamageSystem(double dt) {
+        static bool tpsTriggered = false;
+        static bool structTriggered = false;
+        static bool propTriggered = false;
+        static bool lifeTriggered = false;
+        static bool repairTriggered = false;
+        static double lastTPS = 0.0;
+        static double lastStruct = 0.0;
+        
+        if (!tpsTriggered && m_MissionTime >= 5.0) {
+            tpsTriggered = true;
+            m_DamageSystem.TriggerDamage(DamageType::TPS, 0.3, *m_Vessel);
+            MOCK_INFO("VERIFY: TPS damage 30%% applied at T=%.1fs", m_MissionTime);
+        }
+        if (!structTriggered && m_MissionTime >= 10.0) {
+            structTriggered = true;
+            m_DamageSystem.TriggerDamage(DamageType::STRUCTURAL, 0.2, *m_Vessel);
+            MOCK_INFO("VERIFY: Structural damage 20%% applied at T=%.1fs", m_MissionTime);
+        }
+        if (!propTriggered && m_MissionTime >= 15.0) {
+            propTriggered = true;
+            m_DamageSystem.TriggerDamage(DamageType::PROPULSION, 0.25, *m_Vessel);
+            MOCK_INFO("VERIFY: Propulsion damage 25%% applied at T=%.1fs", m_MissionTime);
+        }
+        if (!lifeTriggered && m_MissionTime >= 20.0) {
+            lifeTriggered = true;
+            m_DamageSystem.TriggerDamage(DamageType::LIFESUPPORT, 0.15, *m_Vessel);
+            MOCK_INFO("VERIFY: Life support damage 15%% applied at T=%.1fs", m_MissionTime);
+        }
+        if (!repairTriggered && m_MissionTime >= 25.0) {
+            repairTriggered = true;
+            m_DamageSystem.ApplyRepair(DamageType::TPS, 0.3);
+            m_DamageSystem.ApplyRepair(DamageType::STRUCTURAL, 0.2);
+            MOCK_INFO("VERIFY: Repair applied at T=%.1fs", m_MissionTime);
+        }
+        
+        double tps = m_DamageSystem.GetDamageLevel(DamageType::TPS);
+        double strukt = m_DamageSystem.GetDamageLevel(DamageType::STRUCTURAL);
+        
+        if (tps > lastTPS && lastTPS > 0) {
+            MOCK_INFO("VERIFY: TPS cascade triggered! %.0f%% -> %.0f%%", lastTPS*100, tps*100);
+        }
+        if (strukt > lastStruct && lastStruct > 0) {
+            MOCK_INFO("VERIFY: Structural cascade triggered! %.0f%% -> %.0f%%", lastStruct*100, strukt*100);
+        }
+        
+        lastTPS = tps;
+        lastStruct = strukt;
     }
 
     void ProcessCommand(char cmd) {
