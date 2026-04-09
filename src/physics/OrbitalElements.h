@@ -48,25 +48,36 @@ namespace DeepSpace {
 
             if (!isBound) {
                 const double periR = (e > 1e-9) ? ((h * h) / (mu * (1.0 + e))) : r;
+                const double planetRadius = planet.GetRadius();
+                double periapsis = periR - planetRadius;
+                if (periapsis < 0) periapsis = 0.0;
+                
                 return {
                     std::numeric_limits<double>::infinity(),
                     e,
                     std::numeric_limits<double>::infinity(),
-                    periR - planet.GetRadius(),
+                    periapsis,
                     inclination,
                     false
                 };
             }
 
-            const double a = -mu / (2.0 * specificEnergy);
+const double a = -mu / (2.0 * specificEnergy);
             const double rA = a * (1.0 + e);
             const double rP = a * (1.0 - e);
-
+            const double planetRadius = planet.GetRadius();
+            
+            double apoapsis = rA - planetRadius;
+            double periapsis = rP - planetRadius;
+            
+            if (periapsis < 0) periapsis = 0.0;
+            if (apoapsis < 0) apoapsis = 0.0;
+            
             return {
                 a,
                 e,
-                rA - planet.GetRadius(),
-                rP - planet.GetRadius(),
+                apoapsis,
+                periapsis,
                 inclination,
                 true
             };
@@ -114,9 +125,15 @@ namespace DeepSpace {
                 }
             }
 
+            const double planetRadius = planet.GetRadius();
+            double maxAlt = maxR - planetRadius;
+            double minAlt = minR - planetRadius;
+            if (minAlt < 0) minAlt = 0.0;
+            if (maxAlt < 0) maxAlt = 0.0;
+            
             return {
-                maxR - planet.GetRadius(),
-                minR - planet.GetRadius(),
+                maxAlt,
+                minAlt,
                 samples
             };
         }
@@ -170,6 +187,45 @@ namespace DeepSpace {
             
             double timeToApoapsis = nu > M_PI ? (2.0 * M_PI - nu) / (2.0 * M_PI) * period : nu / (2.0 * M_PI) * period;
             return timeToApoapsis;
+        }
+        
+        static bool IsEscapeOrbit(const Vec3d& pos, const Vec3d& vel, const Planet& planet) {
+            const double mu = Constants::G * planet.GetMass();
+            const double r = pos.Length();
+            const double v2 = vel.LengthSquared();
+            if (r <= 1.0 || mu <= 0.0) return true;
+            const double vEsc = std::sqrt(2.0 * mu / r);
+            return v2 >= vEsc * vEsc;
+        }
+        
+        static double GetEscapeVelocity(const Planet& planet, double altitude) {
+            const double mu = Constants::G * planet.GetMass();
+            const double r = planet.GetRadius() + altitude;
+            if (r <= 0.0) return 0.0;
+            return std::sqrt(2.0 * mu / r);
+        }
+        
+        static double EstimateCircularizationDV(double currentPeriapsis, double targetPeriapsis, const Planet& planet) {
+            const double mu = Constants::G * planet.GetMass();
+            const double r1 = planet.GetRadius() + currentPeriapsis;
+            const double r2 = planet.GetRadius() + targetPeriapsis;
+            
+            if (r1 <= 0.0 || r2 <= 0.0) return 0.0;
+            const double v1 = std::sqrt(mu / r1);
+            const double v2 = std::sqrt(mu / r2);
+            return std::abs(v2 - v1);
+        }
+        
+        static double EstimateMOIDV(double currentApoapsis, double currentPeriapsis, double targetApoapsis, const Planet& planet) {
+            const double mu = Constants::G * planet.GetMass();
+            const double rp = planet.GetRadius() + currentPeriapsis;
+            const double ra = planet.GetRadius() + currentApoapsis;
+            const double raTarget = planet.GetRadius() + targetApoapsis;
+            
+            if (rp <= 0.0 || ra <= 0.0 || raTarget <= ra) return 0.0;
+            const double vP = std::sqrt(mu * (2.0 / rp - 1.0 / ((ra + rp) / 2.0)));
+            const double vPTarget = std::sqrt(mu * (2.0 / rp - 1.0 / ((raTarget + rp) / 2.0)));
+            return std::abs(vPTarget - vP);
         }
     };
 }

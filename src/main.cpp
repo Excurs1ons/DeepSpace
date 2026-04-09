@@ -13,7 +13,12 @@ int main(int argc, char** argv) {
         } else if (arg == "--mission") {
             headless = true;
             if (i + 1 < argc) {
-                missionFile = argv[++i];
+                std::string missionArg = argv[++i];
+                if (missionArg.find('/') == std::string::npos && missionArg.find('.') != std::string::npos) {
+                    missionFile = "missions/" + missionArg;
+                } else {
+                    missionFile = missionArg;
+                }
             }
         } else if (arg == "--help") {
             std::cout << "Usage: " << argv[0] << " [options]\n";

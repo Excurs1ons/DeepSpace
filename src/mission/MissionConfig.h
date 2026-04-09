@@ -100,6 +100,8 @@ public:
         config.merlin.fuelRatio = std::stod(merlin["fuelRatio"]);
         config.merlin.oxRatio = std::stod(merlin["oxRatio"]);
         config.merlin.OF_ratio = std::stod(merlin["OF_ratio"]);
+        // Derive thrust_N from seaLevel thrust (used by flight plan logging)
+        config.merlin.thrust_N = config.merlin.thrustSeaLevel_N;
         
         // Merlin Vacuum (second stage) - optional section
         if (sections.count("merlin_vacuum")) {
