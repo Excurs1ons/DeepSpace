@@ -40,7 +40,7 @@ KSP 的魅力在于“设计 -> 试错 -> 飞行 -> 探索”的闭环。DeepSpa
 ### 2.1 物理与环境层 (Physics & Environment)
 - `PhysicsBody`：双精度积分与姿态更新。
 - `OrbitalMechanics`：轨道根数解算与轨道预判。
-- `Planet`/`Atmosphere`：重力、大气压与密度模型。
+- `Planet`/`Atmosphere`：重力、大气压与密度模型（采用公开 ISA 分层大气参数，Mach 由局部声速计算）。
 
 ### 2.2 载具系统 (Vessel Systems)
 - `Part` / `PartLibrary`：部件模型与任务组件库。
@@ -68,4 +68,4 @@ KSP 的魅力在于“设计 -> 试错 -> 飞行 -> 探索”的闭环。DeepSpa
   - 添加月球与跨 SOI 轨迹。
 
 ---
-*Last Updated: 2026-04-07*
+*Last Updated: 2026-04-09*

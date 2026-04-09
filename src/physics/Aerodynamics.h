@@ -8,11 +8,8 @@ namespace DeepSpace {
 
     class Aerodynamics {
     public:
-        static double GetSpeedOfSound(double altitude) {
-            const double base = 340.0;
-            if (altitude <= 0.0) return base;
-            if (altitude > 11000.0) return 295.0;
-            return base - (base - 295.0) * (altitude / 11000.0);
+        static double GetSpeedOfSound(double altitude, const Atmosphere& atmosphere) {
+            return atmosphere.GetSpeedOfSound(altitude);
         }
 
         static double GetMachNumber(double velocityMag, double speedOfSound) {
@@ -41,7 +38,7 @@ namespace DeepSpace {
             const double density = atmosphere.GetDensity(altitude);
             if (density <= 0.0001) return;
 
-            const double sos = GetSpeedOfSound(altitude);
+            const double sos = GetSpeedOfSound(altitude, atmosphere);
             const double mach = GetMachNumber(speed, sos);
             const double cd = GetDragCoefficient(mach);
             double area = 10.7;

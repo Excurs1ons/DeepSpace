@@ -65,6 +65,12 @@ cmake -S . -B build -G Ninja -DUSE_MOCK_ENGINE=OFF
 - `PredictVacuumExtrema`：短时真空积分预估 Ap/Pe。
 - 圆轨逻辑支持近拱点自动点火与节流。
 
+### 2.4 现实大气模型（公开标准数据）
+- `Atmosphere` 已从单指数模型升级为 **US Standard Atmosphere 1976** 分层模型（0–84.852 km）。
+- 分层使用公开温度梯度/基准压强参数，分别计算 `Pressure` 与 `Density`。
+- 84.852 km 以上延拓为等温指数衰减，保证高空数值连续性与 headless 稳定性。
+- `Mach` 所用声速改为由局部温度计算（`a = sqrt(gamma * R * T)`），避免固定线性近似带来的偏差。
+
 ---
 
 ## 3. Artemis II 飞行计划（持续完善）
@@ -144,4 +150,4 @@ cmake -S . -B build -G Ninja -DUSE_MOCK_ENGINE=OFF
 | VAB界面开发 | 独立模块，可与其他模块并行 |
 
 ---
-*Last Updated: 2026-04-07*
+*Last Updated: 2026-04-09*

@@ -20,7 +20,7 @@ namespace DeepSpace {
             }
             m_CurrentStage = maxStage;
         }
-
+        
         bool ActivateNextStage() {
             if (m_CurrentStage < 0 || m_Stages.empty()) return false;
 
@@ -30,7 +30,6 @@ namespace DeepSpace {
                 return true;
             }
 
-            // Fire all parts in current stage.
             for (auto& part : currentIt->second) {
                 if (auto engine = std::dynamic_pointer_cast<EnginePart>(part)) {
                     engine->SetActive(true);
@@ -53,7 +52,9 @@ namespace DeepSpace {
                 for (const auto& pair : m_Stages) {
                     if (pair.first > m_CurrentStage) {
                         for (auto& p : pair.second) {
-                            p->SetDecoupled(true);
+                            if (!p->IsPersistent()) {
+                                p->SetDecoupled(true);
+                            }
                         }
                     }
                 }

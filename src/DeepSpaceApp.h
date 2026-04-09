@@ -198,6 +198,9 @@ private:
         orionMmh->SetStage(2);
         orionNto->SetStage(2);
         orionAj10->SetStage(2);
+        orionMmh->SetPersistent(true);
+        orionNto->SetPersistent(true);
+        orionAj10->SetPersistent(true);
         m_Vessel->AddPart(orionMmh);
         m_Vessel->AddPart(orionNto);
         m_Vessel->AddPart(orionAj10);
@@ -219,6 +222,9 @@ private:
         orionMmh->SetStage(2);
         orionNto->SetStage(2);
         orionAj10->SetStage(2);
+        orionMmh->SetPersistent(true);
+        orionNto->SetPersistent(true);
+        orionAj10->SetPersistent(true);
 
         auto icpsLh2 = PartLibrary::CreateArtemis2ICPSLH2Tank(
             m_Config.icpsLH2.dryMass_kg, m_Config.icpsLH2.fuelMass_kg);
@@ -244,6 +250,8 @@ private:
         m_Vessel->AddPart(icpsLox);
         m_Vessel->AddPart(icpsEngine);
         m_Vessel->AddPart(interstage);
+        m_ICPSLH2Tank = icpsLh2;
+        m_ICPSLoxTank = icpsLox;
 
         auto coreRp1 = PartLibrary::CreateFalcon9S1RP1Tank(
             m_Config.coreRP1.dryMass_kg, m_Config.coreRP1.fuelMass_kg);
@@ -477,6 +485,23 @@ private:
         }
     }
 
+    void ActivateOrionEngines() {
+        int activatedCount = 0;
+        for (auto& part : m_Vessel->GetParts()) {
+            if (part->GetStage() == 2) {
+                part->SetActive(true);
+                part->SetDecoupled(false);
+                part->SetPersistent(true);
+                auto* engine = dynamic_cast<EnginePart*>(part.get());
+                if (engine) {
+                    engine->SetThrottle(1.0);
+                    activatedCount++;
+                }
+            }
+        }
+        MOCK_INFO("ActivateOrionEngines: activated %d engines", activatedCount);
+    }
+
     void ManageMissionEvents(double altitude, double dynamicPressure) {
         if (!m_MaxQAnnounced) {
             if (dynamicPressure > m_MaxQObserved) {
@@ -504,15 +529,44 @@ private:
         
         if (m_BoosterSeparated && !m_S2Separated && m_S2LoxTank) {
             double s2loxFuel = m_S2LoxTank->GetCurrentFuel();
+            double s2loxCapacity = 75200.0;
+            double loxPercent = s2loxFuel / s2loxCapacity;
             
-            // S2 separates when LOX runs out (like Stage 0), NOT based on orbital parameters.
-            // The previous logic checked orbit.periapsis which was impossible to achieve while S2 kept burning.
-            if (s2loxFuel <= 0.0) {
-                MOCK_INFO("STAGING: S2 stage separation (time=%.1fs, LOX=%.0fkg)", m_MissionTime, s2loxFuel);
+            if (s2loxFuel <= 0.0 || (loxPercent < 0.10 && altitude > 120000.0)) {
+                MOCK_INFO("STAGING: S2 stage separation (time=%.1fs, LOX=%.0fkg, %.0f%%)", 
+                    m_MissionTime, s2loxFuel, loxPercent * 100.0);
                 m_Vessel->ActivateNextStage();
                 m_S2Separated = true;
+                ActivateOrionEngines();
                 m_CircularizingBurnStarted = false;
                 m_BurnCooldown = false;
+                m_InBurnPhase = false;
+                m_LastBurnTime = 0.0;
+                m_NearPeriapsis = false;
+                m_NearApoapsis = false;
+                m_GuidanceCounter = 0;
+                MOCK_INFO("STAGE2: Orion active for circularization burn");
+            }
+        }
+        
+        if (m_BoosterSeparated && !m_ICPSSeparated && m_ICPSLoxTank) {
+            double icpsLoxFuel = m_ICPSLoxTank->GetCurrentFuel();
+            double icpsLoxCapacity = m_Config.icpsLOX.fuelMass_kg;
+            double loxPercent = (icpsLoxCapacity > 0) ? (icpsLoxFuel / icpsLoxCapacity) : 0.0;
+            
+            if (icpsLoxFuel <= 0.0 || (loxPercent < 0.10 && altitude > 120000.0)) {
+                MOCK_INFO("STAGING: ICPS separation (LOX=%.0fkg, %.0f%%, time=%.1fs)", 
+                    icpsLoxFuel, loxPercent * 100.0, m_MissionTime);
+                m_Vessel->ActivateNextStage();
+                m_ICPSSeparated = true;
+                ActivateOrionEngines();
+                m_CircularizingBurnStarted = false;
+                m_BurnCooldown = false;
+                m_InBurnPhase = false;
+                m_LastBurnTime = 0.0;
+                m_NearPeriapsis = false;
+                m_NearApoapsis = false;
+                m_GuidanceCounter = 0;
                 MOCK_INFO("STAGE2: Orion active for circularization burn");
             }
         }
@@ -620,46 +674,88 @@ private:
         const double rp = earthRadius + actualPe;
         const double ra = earthRadius + actualAp;
         
-        static bool inBurnPhase = false;
-        static double lastBurnTime = 0.0;
-        static bool nearPeriapsis = false;
+        const double radialThreshold = 500.0;
+        bool nearPeCondition = positionRadius < rp * 1.3 && std::abs(radialVelocity) < radialThreshold;
+        bool nearApCondition = positionRadius > ra * 0.7 && std::abs(radialVelocity) < radialThreshold;
         
-        if (abs(radialVelocity) < 1500.0 && positionRadius < rp * 1.2) {
-            nearPeriapsis = true;
+        if (nearPeCondition) {
+            m_NearPeriapsis = true;
+            m_NearApoapsis = false;
         }
-        if (radialVelocity < -200.0) {
-            nearPeriapsis = false;
+        if (nearApCondition) {
+            m_NearApoapsis = true;
+            m_NearPeriapsis = false;
+        }
+        if (radialVelocity < -radialThreshold) {
+            m_NearPeriapsis = false;
+        }
+        if (radialVelocity > radialThreshold) {
+            m_NearApoapsis = false;
+        }
+        
+        if (m_GuidanceCounter % 50 == 0) {
+            MOCK_INFO("DEBUG: rp=%.0f ra=%.0f r=%.0f vr=%.0f nearPeCnd=%d nearApCnd=%d nearPe=%d nearAp=%d",
+                rp/1000, ra/1000, positionRadius/1000, radialVelocity,
+                nearPeCondition, nearApCondition, m_NearPeriapsis, m_NearApoapsis);
         }
         
         Vec3d burnDirection = prograde;
         const char* burnType = "NONE";
         double throttle = 0.0;
         
-        const double minSafePe = 150000.0;
+        const double minSafePe = 120000.0;
+        const double burnDuration = 10.0;
         
-        if (actualAp > targetAp + tolerance && actualPe > minSafePe && !inBurnPhase) {
-            if (nearPeriapsis) {
-                burnDirection = retrograde;
-                burnType = "RETROGRADE@PE";
+        bool shouldRetrograde = (actualAp > targetAp + tolerance) && !m_InBurnPhase;
+        bool shouldPrograde = (actualPe < targetPe - tolerance) && (actualPe > minSafePe) && !m_InBurnPhase;
+        bool shouldWait = (actualPe >= targetPe - tolerance) && (actualAp > targetAp + tolerance) && !m_InBurnPhase;
+        
+        if (shouldRetrograde && m_NearPeriapsis) {
+            burnDirection = retrograde;
+            burnType = "RETROGRADE@PE";
+            throttle = 1.0;
+            m_InBurnPhase = true;
+            m_LastBurnTime = m_MissionTime;
+        }
+        
+        if (shouldPrograde && m_NearApoapsis) {
+            burnDirection = prograde;
+            burnType = "PROGRADE@AP";
+            throttle = 1.0;
+            m_InBurnPhase = true;
+            m_LastBurnTime = m_MissionTime;
+        }
+        
+        if (shouldWait && m_NearApoapsis && (m_MissionTime - m_LastBurnTime > 15.0)) {
+            burnDirection = retrograde;
+            burnType = "RETROGRADE@AP";
+            throttle = 0.8;
+            m_InBurnPhase = true;
+            m_LastBurnTime = m_MissionTime;
+        }
+        
+        if (m_InBurnPhase) {
+            if (m_MissionTime - m_LastBurnTime > burnDuration) {
+                m_InBurnPhase = false;
+            } else {
                 throttle = 1.0;
-                inBurnPhase = true;
-                lastBurnTime = m_MissionTime;
             }
         }
         
-        if (inBurnPhase && m_MissionTime - lastBurnTime > 1.0) {
-            inBurnPhase = false;
+        if (throttle > 0.0) {
+            m_Vessel->SetStageThrottle(2, throttle);
+        }
+        if (throttle > 0.0) {
+            body.SetOrientation(burnDirection);
         }
         
-        body.SetOrientation(burnDirection);
-        m_Vessel->SetStageThrottle(2, throttle);
-        
-        static int guidanceCounter = 0;
-        guidanceCounter++;
-        if (guidanceCounter % 50 == 0) {
-            MOCK_INFO("GUIDANCE: %s Pe=%.0fkm Ap=%.0fkm r=%.0fkm vr=%.0f throttle=%.0f%%",
+        m_GuidanceCounter++;
+        if (m_GuidanceCounter % 5 == 0) {
+            MOCK_INFO("GUIDANCE: %s Pe=%.0fkm Ap=%.0fkm vel=(%.1f,%.1f,%.1f) vr=%.0f throttle=%.0f%% nearPe=%d inBurn=%d",
                 burnType, actualPe / 1000.0, actualAp / 1000.0, 
-                positionRadius / 1000.0, radialVelocity, throttle * 100.0);
+                velocity.x, velocity.y, velocity.z,
+                radialVelocity, throttle * 100.0,
+                m_NearPeriapsis, m_InBurnPhase);
         }
     }
 
@@ -678,7 +774,7 @@ private:
 
         const PhysicsBody& body = m_Vessel->GetPhysicsBody();
         const double speed = body.GetVelocity().Length();
-        const double mach = Aerodynamics::GetMachNumber(speed, Aerodynamics::GetSpeedOfSound(altitude));
+        const double mach = Aerodynamics::GetMachNumber(speed, Aerodynamics::GetSpeedOfSound(altitude, m_Earth.GetAtmosphere()));
 
         const OrbitPrediction prediction = OrbitalMechanics::PredictVacuumExtrema(
             body.GetPosition(),
@@ -689,8 +785,8 @@ private:
 
         const double s2Lh2 = m_Vessel->GetPropellantRemainingMass(1, PropellantType::LH2);
         const double s2Lox = m_Vessel->GetPropellantRemainingMass(1, PropellantType::LOX);
-        const double smMmh = m_Vessel->GetPropellantRemainingMass(0, PropellantType::MMH);
-        const double smNto = m_Vessel->GetPropellantRemainingMass(0, PropellantType::NTO);
+        const double smMmh = m_Vessel->GetPropellantRemainingMass(2, PropellantType::MMH);
+        const double smNto = m_Vessel->GetPropellantRemainingMass(2, PropellantType::NTO);
 
         MOCK_INFO(
             "[ArtemisII] T=%6.1fs Alt=%7.0fm Vel=%6.0fm/s q=%7.0fPa Mach=%.2f Ap=%7.0fkm Pe=%7.0fkm PredAp=%7.0fkm PredPe=%7.0fkm Mass=%7.0fkg Eng=%d Thr=%8.0fkN ThrPct=%.0f%% mdot=%6.1f fuel=%6.1f ox=%6.1f S1LH2=%6.0f S1LOX=%6.0f S0MMH=%6.0f S0NTO=%6.0f p=%.0fPa",
@@ -730,7 +826,10 @@ private:
     std::shared_ptr<Vessel> m_Vessel;
     std::shared_ptr<FuelTankPart> m_BoosterCoreLoxTank;
     std::shared_ptr<FuelTankPart> m_S2LoxTank;
+    std::shared_ptr<FuelTankPart> m_ICPSLoxTank;
+    std::shared_ptr<FuelTankPart> m_ICPSLH2Tank;
     bool m_S2Separated = false;
+    bool m_ICPSSeparated = false;
     std::shared_ptr<EnduranceStation> m_EnduranceStation;
     std::vector<std::shared_ptr<Vessel>> m_Spacecraft;
     
@@ -744,6 +843,13 @@ private:
     bool m_OrbitAchieved = false;
     bool m_CircularizingBurnStarted = false;
     bool m_BurnCooldown = false;
+    
+    // Circularization guidance state
+    bool m_InBurnPhase = false;
+    double m_LastBurnTime = 0.0;
+    bool m_NearPeriapsis = false;
+    bool m_NearApoapsis = false;
+    int m_GuidanceCounter = 0;
 
     bool m_AutopilotCircularize = true;
     bool m_ManualControlEnabled = false;
@@ -776,6 +882,7 @@ private:
     
 public:
     bool IsMissionComplete() const { return m_MissionComplete; }
+    bool IsOrbitAchieved() const { return m_OrbitAchieved; }
     double GetCurrentAltitude() const {
         return m_Earth.GetAltitude(m_Vessel->GetPhysicsBody().GetPosition());
     }
@@ -817,10 +924,11 @@ private:
 
 class DeepSpaceApp : public Mock::Application {
 public:
-    explicit DeepSpaceApp(bool headless = false) : m_HeadlessDefault(headless) {}
+    explicit DeepSpaceApp(bool headless = false, const std::string& missionFile = "missions/artemis2.conf") 
+        : m_HeadlessDefault(headless), m_MissionFile(missionFile) {}
 
     int OnInitialize() override {
-        m_SimulationLayer = new SimulationLayer(m_HeadlessDefault);
+        m_SimulationLayer = new SimulationLayer(m_HeadlessDefault, m_MissionFile);
         PushLayer(m_SimulationLayer);
         return 0;
     }
@@ -856,19 +964,20 @@ public:
         double totalSimTime = 0.0;
         const double maxSimTime = 7200.0;
         double lastReportTime = 0.0;
-        const double reportInterval = 10.0;
+        const double reportInterval = 30.0;
         
         MOCK_INFO("RunHeadless: Starting simulation (max %.0fs, dt=%.1fs)", maxSimTime, fixedDt);
         
         int loopCount = 0;
         bool running = true;
+        bool orbitAchieved = false;
         while (running && totalSimTime < maxSimTime) {
             totalSimTime += fixedDt;
             loopCount++;
             
             m_SimulationLayer->OnUpdate(fixedDt);
             
-            if (loopCount <= 3) {
+            if (loopCount <= 5) {
                 double altitude = m_SimulationLayer->GetCurrentAltitude();
                 double velocity = m_SimulationLayer->GetCurrentVelocity();
                 MOCK_TRACE("Headless T=%.1fs: Alt=%.0fm Vel=%.0fm/s", totalSimTime, altitude, velocity);
@@ -878,7 +987,16 @@ public:
                 lastReportTime = totalSimTime;
                 double altitude = m_SimulationLayer->GetCurrentAltitude();
                 double velocity = m_SimulationLayer->GetCurrentVelocity();
-                MOCK_INFO("[T=%.0fs] Alt=%.0fm Vel=%.0fm/s", totalSimTime, altitude, velocity);
+                double mass = m_SimulationLayer->GetVesselMass();
+                double thrust = m_SimulationLayer->GetTotalThrust();
+                MOCK_INFO("[T=%.0fs] Alt=%.0fkm Vel=%.0fm/s Mass=%.0fkg Thrust=%.0fkN", 
+                    totalSimTime, altitude / 1000.0, velocity, mass, thrust / 1000.0);
+            }
+            
+            if (m_SimulationLayer->IsOrbitAchieved() && !orbitAchieved) {
+                orbitAchieved = true;
+                MOCK_INFO("RunHeadless: Target orbit achieved at T=%.1fs!", totalSimTime);
+                running = false;
             }
             
             if (m_SimulationLayer->IsMissionComplete()) {
@@ -887,8 +1005,12 @@ public:
             }
         }
         
-        if (totalSimTime >= maxSimTime) {
-            MOCK_INFO("RunHeadless: Max simulation time reached (%.1fs)", totalSimTime);
+        if (!orbitAchieved && totalSimTime >= maxSimTime) {
+            MOCK_INFO("RunHeadless: Max simulation time reached (%.1fs) - orbit NOT achieved", totalSimTime);
+        }
+        
+        if (orbitAchieved) {
+            MOCK_INFO("RunHeadless: SUCCESS - Orbit insertion complete!");
         }
     }
 
@@ -896,6 +1018,7 @@ private:
     std::vector<std::unique_ptr<Mock::Layer>> m_Layers;
     SimulationLayer* m_SimulationLayer = nullptr;
     bool m_HeadlessDefault = false;
+    std::string m_MissionFile;
 };
 
 }

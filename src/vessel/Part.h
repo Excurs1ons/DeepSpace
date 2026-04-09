@@ -16,7 +16,7 @@ namespace DeepSpace {
     class Part {
     public:
         Part(const std::string& name, double dryMass)
-            : m_Name(name), m_DryMass(dryMass), m_Active(false), m_Stage(-1), m_Decoupled(false) {}
+            : m_Name(name), m_DryMass(dryMass), m_Active(false), m_Stage(-1), m_Decoupled(false), m_Persistent(false) {}
 
         virtual ~Part() = default;
 
@@ -40,12 +40,16 @@ namespace DeepSpace {
         void SetDecoupled(bool decoupled) { m_Decoupled = decoupled; }
         bool IsDecoupled() const { return m_Decoupled; }
 
+        void SetPersistent(bool persistent) { m_Persistent = persistent; }
+        bool IsPersistent() const { return m_Persistent; }
+
     protected:
         std::string m_Name;
         double m_DryMass;
         bool m_Active;
         int m_Stage;
         bool m_Decoupled;
+        bool m_Persistent;
     };
 
     class DecouplerPart : public Part {
