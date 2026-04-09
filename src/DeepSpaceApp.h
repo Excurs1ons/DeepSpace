@@ -99,7 +99,7 @@ public:
 
         const auto elements = OrbitalMechanics::CalculateElements(body.GetPosition(), body.GetVelocity(), m_Earth);
 
-        if (m_AutopilotCircularize && m_BoosterSeparated) {
+        if (m_AutopilotCircularize && m_S2Separated) {
             ApplyCircularizationGuidance(elements, altitude, body);
         }
 
@@ -132,8 +132,80 @@ public:
 
 private:
     void BuildArtemis2FlightPlan() {
-        MOCK_INFO("BuildArtemis2FlightPlan: ICPS thrust=%.0f N, Vacuum Isp=%.0f s, Merlin thrust=%.0f N", 
-            m_Config.rl10.thrust_N, m_Config.rl10.vacuumIsp_s, m_Config.merlin.thrust_N);
+        const bool useFalcon9Config = m_Config.merlinVacuum.thrust_N > 0.0;
+        
+        if (useFalcon9Config) {
+            BuildFalcon9FlightPlan();
+        } else {
+            BuildArtemisFlightPlan();
+        }
+        
+        MOCK_INFO("%s stack ready: %s, mass=%.0fkg", 
+            m_Config.missionName.c_str(), m_Vessel->GetName().c_str(), m_Vessel->GetPhysicsBody().GetMass());
+    }
+    
+    void BuildFalcon9FlightPlan() {
+        MOCK_INFO("Building Falcon 9 flight plan: %d Merlin engines, S2 thrust=%.0f N",
+            m_Config.merlin.engineCount, m_Config.merlinVacuum.thrust_N);
+        
+        auto coreRp1 = PartLibrary::CreateFalcon9S1RP1Tank(
+            m_Config.coreRP1.dryMass_kg, m_Config.coreRP1.fuelMass_kg);
+        auto coreLox = PartLibrary::CreateFalcon9S1LOXTank(
+            m_Config.coreLOX.dryMass_kg, m_Config.coreLOX.fuelMass_kg);
+        coreRp1->SetStage(0);
+        coreLox->SetStage(0);
+        m_Vessel->AddPart(coreRp1);
+        m_Vessel->AddPart(coreLox);
+        m_BoosterCoreLoxTank = coreLox;
+
+        for (int i = 0; i < m_Config.merlin.engineCount; ++i) {
+            auto engine = PartLibrary::CreateMerlin1D(
+                m_Config.merlin.thrustSeaLevel_N,
+                m_Config.merlin.seaLevelIsp_s,
+                m_Config.merlin.vacuumIsp_s,
+                m_Config.merlin.OF_ratio);
+            engine->SetStage(0);
+            m_Vessel->AddPart(engine);
+        }
+
+        auto s2Rp1 = PartLibrary::CreateFalcon9S2RP1Tank(
+            m_Config.secondStageRP1.dryMass_kg, m_Config.secondStageRP1.fuelMass_kg);
+        auto s2Lox = PartLibrary::CreateFalcon9S2LOXTank(
+            m_Config.secondStageLOX.dryMass_kg, m_Config.secondStageLOX.fuelMass_kg);
+        s2Rp1->SetStage(1);
+        s2Lox->SetStage(1);
+        m_Vessel->AddPart(s2Rp1);
+        m_Vessel->AddPart(s2Lox);
+        m_S2LoxTank = s2Lox;
+
+        auto s2Engine = PartLibrary::CreateMerlin1DVac(
+            m_Config.merlinVacuum.thrust_N,
+            m_Config.merlinVacuum.vacuumIsp_s,
+            m_Config.merlin.seaLevelIsp_s,
+            m_Config.merlinVacuum.OF_ratio);
+        s2Engine->SetStage(1);
+        m_Vessel->AddPart(s2Engine);
+        
+        auto orionMmh = PartLibrary::CreateArtemis2OrionMMHTank(
+            m_Config.orionMMH.dryMass_kg, m_Config.orionMMH.fuelMass_kg);
+        auto orionNto = PartLibrary::CreateArtemis2OrionNTOTank(
+            m_Config.orionNTO.dryMass_kg, m_Config.orionNTO.fuelMass_kg);
+        auto orionAj10 = PartLibrary::CreateAJ10_190(
+            m_Config.aj10.thrust_N,
+            m_Config.aj10.seaLevelIsp_s,
+            m_Config.aj10.vacuumIsp_s,
+            m_Config.aj10.OF_ratio);
+        orionMmh->SetStage(2);
+        orionNto->SetStage(2);
+        orionAj10->SetStage(2);
+        m_Vessel->AddPart(orionMmh);
+        m_Vessel->AddPart(orionNto);
+        m_Vessel->AddPart(orionAj10);
+    }
+    
+    void BuildArtemisFlightPlan() {
+        MOCK_INFO("Building Artemis II flight plan: ICPS thrust=%.0f N, Merlin thrust=%.0f N", 
+            m_Config.rl10.thrust_N, m_Config.merlin.thrust_N);
         
         auto orionMmh = PartLibrary::CreateArtemis2OrionMMHTank(
             m_Config.orionMMH.dryMass_kg, m_Config.orionMMH.fuelMass_kg);
@@ -183,17 +255,15 @@ private:
         m_Vessel->AddPart(coreLox);
         m_BoosterCoreLoxTank = coreLox;
 
-        for (int i = 0; i < 13; ++i) {
+        for (int i = 0; i < m_Config.merlin.engineCount; ++i) {
             auto engine = PartLibrary::CreateMerlin1D(
-                m_Config.merlin.thrust_N,
+                m_Config.merlin.thrustSeaLevel_N,
                 m_Config.merlin.seaLevelIsp_s,
                 m_Config.merlin.vacuumIsp_s,
                 m_Config.merlin.OF_ratio);
             engine->SetStage(0);
             m_Vessel->AddPart(engine);
         }
-
-        MOCK_INFO("Artemis II stack ready: %s, mass=%.0fkg", m_Vessel->GetName().c_str(), m_Vessel->GetPhysicsBody().GetMass());
     }
 
     void HandleInput(double dt) {
@@ -419,15 +489,32 @@ private:
             }
         }
 
-        if (!m_BoosterSeparated && m_BoosterCoreLoxTank && m_BoosterCoreLoxTank->GetCurrentFuel() <= 0.0) {
-            MOCK_INFO("Booster/core depletion - staging to ICPS (LOX=%.0fkg, time=%.1fs)", 
-                m_BoosterCoreLoxTank->GetCurrentFuel(), m_MissionTime);
-            m_Vessel->ActivateNextStage();
-            m_BoosterSeparated = true;
-            m_CircularizingBurnStarted = false;
-            m_Vessel->GetRCS().SetEnabled(true);
-            m_RCSState = true;
-            m_ICPSIgnitionTime = m_MissionTime;
+        if (!m_BoosterSeparated && m_BoosterCoreLoxTank) {
+            double loxFuel = m_BoosterCoreLoxTank->GetCurrentFuel();
+            if (loxFuel <= 0.0) {
+                MOCK_INFO("STAGING: Core stage separation (LOX depleted, time=%.1fs)", m_MissionTime);
+                m_Vessel->ActivateNextStage();
+                m_BoosterSeparated = true;
+                m_CircularizingBurnStarted = false;
+                m_Vessel->GetRCS().SetEnabled(true);
+                m_RCSState = true;
+                m_ICPSIgnitionTime = m_MissionTime;
+            }
+        }
+        
+        if (m_BoosterSeparated && !m_S2Separated && m_S2LoxTank) {
+            double s2loxFuel = m_S2LoxTank->GetCurrentFuel();
+            
+            // S2 separates when LOX runs out (like Stage 0), NOT based on orbital parameters.
+            // The previous logic checked orbit.periapsis which was impossible to achieve while S2 kept burning.
+            if (s2loxFuel <= 0.0) {
+                MOCK_INFO("STAGING: S2 stage separation (time=%.1fs, LOX=%.0fkg)", m_MissionTime, s2loxFuel);
+                m_Vessel->ActivateNextStage();
+                m_S2Separated = true;
+                m_CircularizingBurnStarted = false;
+                m_BurnCooldown = false;
+                MOCK_INFO("STAGE2: Orion active for circularization burn");
+            }
         }
 
         if (m_BoosterSeparated && !m_ICPSSettled) {
@@ -486,29 +573,94 @@ private:
     }
 
     void ApplyCircularizationGuidance(const OrbitalElements& orbit, double altitude, PhysicsBody& body) {
-        if (!m_BoosterSeparated) return;
+        if (!m_S2Separated) return;
         
         const Vec3d velocity = body.GetVelocity();
         const Vec3d prograde = velocity.Normalized();
+        const Vec3d retrograde = -prograde;
         
         const double targetPe = m_Config.targetPe_km * 1000.0;
-        const double tolerance = 5000.0;
+        const double targetAp = m_Config.targetAp_km * 1000.0;
+        const double tolerance = 20000.0;
         
-        const double actualPe = orbit.periapsis > 0 ? orbit.periapsis : altitude;
-        const bool peInRange = actualPe >= targetPe - tolerance;
+        const double actualPe = orbit.periapsis > 0 ? orbit.periapsis : 0.0;
+        const double actualAp = orbit.apoapsis > 0 ? orbit.apoapsis : altitude;
         
-        if (peInRange) {
-            m_Vessel->SetStageThrottle(1, 0.0);
+        const bool peInRange = std::abs(actualPe - targetPe) <= tolerance;
+        const bool apInRange = std::abs(actualAp - targetAp) <= tolerance;
+        const bool orbitStable = peInRange && apInRange;
+        
+        if (orbitStable) {
+            m_Vessel->SetStageThrottle(2, 0.0);
             if (!m_OrbitAchieved) {
                 m_OrbitAchieved = true;
-                MOCK_INFO("GUIDANCE: CIRCULARIZATION COMPLETE! Pe=%.0fkm",
-                    actualPe / 1000.0);
+                MOCK_INFO("GUIDANCE: CIRCULARIZATION COMPLETE! Pe=%.0fkm Ap=%.0fkm",
+                    actualPe / 1000.0, actualAp / 1000.0);
             }
             return;
         }
         
-        body.SetOrientation(prograde);
-        m_Vessel->SetStageThrottle(1, 1.0);
+        const double orionMmh = m_Vessel->GetPropellantRemainingMass(2, PropellantType::MMH);
+        const double orionNto = m_Vessel->GetPropellantRemainingMass(2, PropellantType::NTO);
+        
+        if (orionMmh <= 0.0 || orionNto <= 0.0) {
+            m_Vessel->SetStageThrottle(2, 0.0);
+            if (!m_OrbitAchieved) {
+                MOCK_INFO("GUIDANCE: Orion propellant depleted (MMH=%.0f, NTO=%.0f) - orbit not achieved", orionMmh, orionNto);
+            }
+            return;
+        }
+        
+        const Vec3d position = body.GetPosition();
+        const double positionRadius = position.Length();
+        const Vec3d radialUnit = position.Normalized();
+        const double radialVelocity = Vec3d::Dot(velocity, radialUnit);
+        
+        const double earthRadius = 6371000.0;
+        const double rp = earthRadius + actualPe;
+        const double ra = earthRadius + actualAp;
+        
+        static bool inBurnPhase = false;
+        static double lastBurnTime = 0.0;
+        static bool nearPeriapsis = false;
+        
+        if (abs(radialVelocity) < 1500.0 && positionRadius < rp * 1.2) {
+            nearPeriapsis = true;
+        }
+        if (radialVelocity < -200.0) {
+            nearPeriapsis = false;
+        }
+        
+        Vec3d burnDirection = prograde;
+        const char* burnType = "NONE";
+        double throttle = 0.0;
+        
+        const double minSafePe = 150000.0;
+        
+        if (actualAp > targetAp + tolerance && actualPe > minSafePe && !inBurnPhase) {
+            if (nearPeriapsis) {
+                burnDirection = retrograde;
+                burnType = "RETROGRADE@PE";
+                throttle = 1.0;
+                inBurnPhase = true;
+                lastBurnTime = m_MissionTime;
+            }
+        }
+        
+        if (inBurnPhase && m_MissionTime - lastBurnTime > 1.0) {
+            inBurnPhase = false;
+        }
+        
+        body.SetOrientation(burnDirection);
+        m_Vessel->SetStageThrottle(2, throttle);
+        
+        static int guidanceCounter = 0;
+        guidanceCounter++;
+        if (guidanceCounter % 50 == 0) {
+            MOCK_INFO("GUIDANCE: %s Pe=%.0fkm Ap=%.0fkm r=%.0fkm vr=%.0f throttle=%.0f%%",
+                burnType, actualPe / 1000.0, actualAp / 1000.0, 
+                positionRadius / 1000.0, radialVelocity, throttle * 100.0);
+        }
     }
 
     void EmitTelemetry(
@@ -577,6 +729,8 @@ private:
     Planet m_Earth;
     std::shared_ptr<Vessel> m_Vessel;
     std::shared_ptr<FuelTankPart> m_BoosterCoreLoxTank;
+    std::shared_ptr<FuelTankPart> m_S2LoxTank;
+    bool m_S2Separated = false;
     std::shared_ptr<EnduranceStation> m_EnduranceStation;
     std::vector<std::shared_ptr<Vessel>> m_Spacecraft;
     
@@ -589,6 +743,7 @@ private:
     bool m_MaxQAnnounced = false;
     bool m_OrbitAchieved = false;
     bool m_CircularizingBurnStarted = false;
+    bool m_BurnCooldown = false;
 
     bool m_AutopilotCircularize = true;
     bool m_ManualControlEnabled = false;

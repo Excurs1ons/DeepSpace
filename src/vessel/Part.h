@@ -63,14 +63,14 @@ namespace DeepSpace {
         EnginePart(
             const std::string& name,
             double mass,
-            double maxThrustVac,
+            double maxThrustSL,
             double ispSL,
             double ispVac,
             PropellantType fuelType,
             PropellantType oxidizerType,
             double mixtureRatio)
             : Part(name, mass),
-              m_MaxThrustVac(maxThrustVac),
+              m_MaxThrustSL(maxThrustSL),
               m_IspSL(ispSL),
               m_IspVac(ispVac),
               m_Throttle(0.0),
@@ -108,14 +108,14 @@ namespace DeepSpace {
             return m_IspVac - (m_IspVac - m_IspSL) * t;
         }
 
+        double GetMaxMassFlowRate() const {
+            return m_MaxThrustSL / (m_IspSL * 9.80665);
+        }
+
         double GetThrust(double ambientPressure) const {
             if (!m_Active || m_Throttle <= 0.0) return 0.0;
             const double mDot = GetMaxMassFlowRate();
             return mDot * 9.80665 * GetCurrentIsp(ambientPressure) * m_Throttle;
-        }
-
-        double GetMaxMassFlowRate() const {
-            return m_MaxThrustVac / (m_IspVac * 9.80665);
         }
 
         double GetCurrentMassFlowRate() const {
@@ -124,14 +124,14 @@ namespace DeepSpace {
         }
 
     private:
-        double m_MaxThrustVac;
+        double m_MaxThrustSL;
         double m_IspSL;
         double m_IspVac;
         double m_Throttle;
 
         PropellantType m_FuelType;
         PropellantType m_OxidizerType;
-        double m_MixtureRatio; // O/F mass ratio
+        double m_MixtureRatio;
     };
 
     class FuelTankPart : public Part {

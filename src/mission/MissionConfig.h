@@ -11,6 +11,9 @@ class MissionConfig {
 public:
     struct EngineConfig {
         double thrust_N = 0.0;
+        double thrustSeaLevel_N = 0.0;
+        double thrustVacuum_N = 0.0;
+        int engineCount = 1;
         double seaLevelIsp_s = 0.0;
         double vacuumIsp_s = 0.0;
         double fuelRatio = 0.0;
@@ -37,11 +40,14 @@ public:
     double maxDuration_s = 7200.0;
 
     EngineConfig merlin;
+    EngineConfig merlinVacuum;
     EngineConfig rl10;
     EngineConfig aj10;
 
     TankConfig coreRP1;
     TankConfig coreLOX;
+    TankConfig secondStageRP1;
+    TankConfig secondStageLOX;
     TankConfig icpsLH2;
     TankConfig icpsLOX;
     TankConfig orionMMH;
@@ -86,12 +92,31 @@ public:
         config.maxDuration_s = std::stod(m["maxDuration_s"]);
         
         auto& merlin = sections["merlin"];
-        config.merlin.thrust_N = std::stod(merlin["thrust_N"]);
+        config.merlin.thrustSeaLevel_N = std::stod(merlin["thrustSeaLevel_N"]);
+        config.merlin.thrustVacuum_N = std::stod(merlin["thrustVacuum_N"]);
+        config.merlin.engineCount = std::stoi(merlin["engineCount"]);
         config.merlin.seaLevelIsp_s = std::stod(merlin["seaLevelIsp_s"]);
         config.merlin.vacuumIsp_s = std::stod(merlin["vacuumIsp_s"]);
         config.merlin.fuelRatio = std::stod(merlin["fuelRatio"]);
         config.merlin.oxRatio = std::stod(merlin["oxRatio"]);
         config.merlin.OF_ratio = std::stod(merlin["OF_ratio"]);
+        
+        // Merlin Vacuum (second stage) - optional section
+        if (sections.count("merlin_vacuum")) {
+            auto& mv = sections["merlin_vacuum"];
+            config.merlinVacuum.thrust_N = std::stod(mv["thrust_N"]);
+            config.merlinVacuum.vacuumIsp_s = std::stod(mv["vacuumIsp_s"]);
+            config.merlinVacuum.fuelRatio = std::stod(mv["fuelRatio"]);
+            config.merlinVacuum.oxRatio = std::stod(mv["oxRatio"]);
+            config.merlinVacuum.OF_ratio = std::stod(mv["OF_ratio"]);
+        } else {
+            // Default Merlin Vacuum if section not present
+            config.merlinVacuum.thrust_N = 934000.0;
+            config.merlinVacuum.vacuumIsp_s = 348.0;
+            config.merlinVacuum.fuelRatio = 0.299;
+            config.merlinVacuum.oxRatio = 0.701;
+            config.merlinVacuum.OF_ratio = 2.35;
+        }
         
         auto& rl10 = sections["rl10"];
         config.rl10.thrust_N = std::stod(rl10["thrust_N"]);
@@ -118,6 +143,18 @@ public:
         config.coreLOX.fuelMass_kg = std::stod(ct["loxMass_kg"]);
         config.coreLOX.dryMass_kg = std::stod(ct["loxDry_kg"]);
         config.coreLOX.propellant = "LOX";
+        
+        if (sections.count("second_stage_tanks")) {
+            auto& st = sections["second_stage_tanks"];
+            config.secondStageRP1.name = "F9 S2 RP-1 Tank";
+            config.secondStageRP1.fuelMass_kg = std::stod(st["rp1Mass_kg"]);
+            config.secondStageRP1.dryMass_kg = std::stod(st["rp1Dry_kg"]);
+            config.secondStageRP1.propellant = "RP1";
+            config.secondStageLOX.name = "F9 S2 LOX Tank";
+            config.secondStageLOX.fuelMass_kg = std::stod(st["loxMass_kg"]);
+            config.secondStageLOX.dryMass_kg = std::stod(st["loxDry_kg"]);
+            config.secondStageLOX.propellant = "LOX";
+        }
         
         auto& it = sections["icps_tanks"];
         config.icpsLH2.name = "ICPS LH2 Tank";

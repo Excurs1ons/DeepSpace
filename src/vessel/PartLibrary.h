@@ -16,12 +16,12 @@ namespace DeepSpace {
 
     class PartLibrary {
     public:
-        static std::shared_ptr<EnginePart> CreateMerlin1D(double thrust_N = 3000000.0,
+        static std::shared_ptr<EnginePart> CreateMerlin1D(double thrustSL_N = 845000.0,
             double seaLevelIsp_s = 282.0, double vacuumIsp_s = 311.0, double OF_ratio = 2.56) {
             return std::make_shared<EnginePart>(
                 "Merlin 1D",
                 470.0,
-                thrust_N,
+                thrustSL_N,
                 seaLevelIsp_s,
                 vacuumIsp_s,
                 PropellantType::RP1,
@@ -29,36 +29,39 @@ namespace DeepSpace {
                 OF_ratio);
         }
 
-        static std::shared_ptr<EnginePart> CreateMerlin1DVac() {
+        static std::shared_ptr<EnginePart> CreateMerlin1DVac(double thrustVacuum_N = 934000.0,
+            double vacuumIsp_s = 348.0, double seaLevelIsp_s = 282.0, double OF_ratio = 2.35) {
+            double thrustSeaLevel_N = thrustVacuum_N * (seaLevelIsp_s / vacuumIsp_s);
             return std::make_shared<EnginePart>(
                 "Merlin 1D Vac",
                 490.0,
-                981000.0,
-                200.0,
-                348.0,
+                thrustSeaLevel_N,
+                seaLevelIsp_s,
+                vacuumIsp_s,
                 PropellantType::RP1,
                 PropellantType::LOX,
-                2.56);
+                OF_ratio);
         }
 
-        static std::shared_ptr<EnginePart> CreateF1() {
+        static std::shared_ptr<EnginePart> CreateF1(double thrustSL_N = 7770000.0,
+            double seaLevelIsp_s = 263.0, double vacuumIsp_s = 304.0, double OF_ratio = 2.27) {
             return std::make_shared<EnginePart>(
                 "F-1 Engine",
                 8400.0,
-                7770000.0,
-                263.0,
-                304.0,
+                thrustSL_N,
+                seaLevelIsp_s,
+                vacuumIsp_s,
                 PropellantType::RP1,
                 PropellantType::LOX,
-                2.27);
+                OF_ratio);
         }
 
-        static std::shared_ptr<EnginePart> CreateRL10B2(double thrust_N = 15000000.0,
-            double seaLevelIsp_s = 350.0, double vacuumIsp_s = 465.0, double OF_ratio = 5.5) {
+        static std::shared_ptr<EnginePart> CreateRL10B2(double thrustSL_N = 110000.0,
+            double seaLevelIsp_s = 200.0, double vacuumIsp_s = 448.0, double OF_ratio = 5.5) {
             return std::make_shared<EnginePart>(
                 "RL10B-2",
                 301.0,
-                thrust_N,
+                thrustSL_N,
                 seaLevelIsp_s,
                 vacuumIsp_s,
                 PropellantType::LH2,
@@ -66,12 +69,12 @@ namespace DeepSpace {
                 OF_ratio);
         }
 
-        static std::shared_ptr<EnginePart> CreateAJ10_190(double thrust_N = 267000.0,
+        static std::shared_ptr<EnginePart> CreateAJ10_190(double thrustSL_N = 267000.0,
             double seaLevelIsp_s = 319.0, double vacuumIsp_s = 319.0, double OF_ratio = 1.65) {
             return std::make_shared<EnginePart>(
                 "AJ10-190",
                 112.0,
-                thrust_N,
+                thrustSL_N,
                 seaLevelIsp_s,
                 vacuumIsp_s,
                 PropellantType::MMH,
@@ -89,12 +92,12 @@ namespace DeepSpace {
             return std::make_shared<FuelTankPart>("F9 S1 LOX Tank", dryMass_kg, fuelMass_kg, PropellantType::LOX);
         }
 
-        static std::shared_ptr<FuelTankPart> CreateFalcon9S2RP1Tank() {
-            return std::make_shared<FuelTankPart>("F9 S2 RP-1 Tank", 1800.0, 29000.0, PropellantType::RP1);
+        static std::shared_ptr<FuelTankPart> CreateFalcon9S2RP1Tank(double dryMass_kg = 1800.0, double fuelMass_kg = 29000.0) {
+            return std::make_shared<FuelTankPart>("F9 S2 RP-1 Tank", dryMass_kg, fuelMass_kg, PropellantType::RP1);
         }
 
-        static std::shared_ptr<FuelTankPart> CreateFalcon9S2LOXTank() {
-            return std::make_shared<FuelTankPart>("F9 S2 LOX Tank", 2200.0, 71000.0, PropellantType::LOX);
+        static std::shared_ptr<FuelTankPart> CreateFalcon9S2LOXTank(double dryMass_kg = 2200.0, double fuelMass_kg = 71000.0) {
+            return std::make_shared<FuelTankPart>("F9 S2 LOX Tank", dryMass_kg, fuelMass_kg, PropellantType::LOX);
         }
 
         static std::shared_ptr<FuelTankPart> CreateArtemis2ICPSLH2Tank(double dryMass_kg = 3200.0,

@@ -41,7 +41,6 @@ namespace DeepSpace {
                 }
             }
 
-            // A decoupler in stage N drops lower stage hardware (N+1, N+2...).
             bool stageHasDecoupler = false;
             for (const auto& part : currentIt->second) {
                 if (std::dynamic_pointer_cast<DecouplerPart>(part)) {
