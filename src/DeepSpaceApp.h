@@ -132,16 +132,93 @@ public:
 
 private:
     void BuildArtemis2FlightPlan() {
-        const bool useFalcon9Config = m_Config.merlinVacuum.thrust_N > 0.0;
+        const bool useSLSConfig = m_Config.rs25.engineCount > 0;
         
-        if (useFalcon9Config) {
-            BuildFalcon9FlightPlan();
+        if (useSLSConfig) {
+            BuildSLSFlightPlan();
         } else {
-            BuildArtemisFlightPlan();
+            BuildFalcon9FlightPlan();
         }
         
         MOCK_INFO("%s stack ready: %s, mass=%.0fkg", 
             m_Config.missionName.c_str(), m_Vessel->GetName().c_str(), m_Vessel->GetPhysicsBody().GetMass());
+    }
+    
+    void BuildSLSFlightPlan() {
+        MOCK_INFO("Building SLS Block 1 flight plan: %d RS-25 engines, %d SRB, ICPS thrust=%.0f N",
+            m_Config.rs25.engineCount, m_Config.srb.engineCount, m_Config.rl10.thrust_N);
+        
+        auto orionMmh = PartLibrary::CreateOrionMMHTankReal(
+            m_Config.orionMMH.dryMass_kg, m_Config.orionMMH.fuelMass_kg);
+        auto orionNto = PartLibrary::CreateOrionNTOTankReal(
+            m_Config.orionNTO.dryMass_kg, m_Config.orionNTO.fuelMass_kg);
+        auto orionAj10 = PartLibrary::CreateAJ10_190(
+            m_Config.aj10.thrust_N,
+            m_Config.aj10.seaLevelIsp_s,
+            m_Config.aj10.vacuumIsp_s,
+            m_Config.aj10.OF_ratio);
+        orionMmh->SetStage(2);
+        orionNto->SetStage(2);
+        orionAj10->SetStage(2);
+        orionMmh->SetPersistent(true);
+        orionNto->SetPersistent(true);
+        orionAj10->SetPersistent(true);
+        m_Vessel->AddPart(orionMmh);
+        m_Vessel->AddPart(orionNto);
+        m_Vessel->AddPart(orionAj10);
+        
+        auto icpsLh2 = PartLibrary::CreateArtemis2ICPSLH2Tank(
+            m_Config.icpsLH2.dryMass_kg, m_Config.icpsLH2.fuelMass_kg);
+        auto icpsLox = PartLibrary::CreateArtemis2ICPSLOXTank(
+            m_Config.icpsLOX.dryMass_kg, m_Config.icpsLOX.fuelMass_kg);
+        auto icpsEngine = PartLibrary::CreateRL10C2(
+            m_Config.rl10.thrust_N,
+            m_Config.rl10.seaLevelIsp_s,
+            m_Config.rl10.vacuumIsp_s,
+            m_Config.rl10.OF_ratio);
+        auto interstage = std::make_shared<DecouplerPart>("ICPS Interstage", 600.0);
+        
+        icpsLh2->SetStage(1);
+        icpsLox->SetStage(1);
+        icpsEngine->SetStage(1);
+        interstage->SetStage(1);
+        
+        m_Vessel->AddPart(icpsLh2);
+        m_Vessel->AddPart(icpsLox);
+        m_Vessel->AddPart(icpsEngine);
+        m_Vessel->AddPart(interstage);
+        m_ICPSLH2Tank = icpsLh2;
+        m_ICPSLoxTank = icpsLox;
+        
+        auto coreLh2 = PartLibrary::CreateSLSLH2Tank(
+            m_Config.coreLH2.dryMass_kg, m_Config.coreLH2.fuelMass_kg);
+        auto coreLox = PartLibrary::CreateSLSLOXTank(
+            m_Config.coreLOX.dryMass_kg, m_Config.coreLOX.fuelMass_kg);
+        coreLh2->SetStage(0);
+        coreLox->SetStage(0);
+        m_Vessel->AddPart(coreLh2);
+        m_Vessel->AddPart(coreLox);
+        m_BoosterCoreLoxTank = coreLox;
+        
+        for (int i = 0; i < m_Config.rs25.engineCount; ++i) {
+            auto engine = PartLibrary::CreateRS25(
+                m_Config.rs25.thrustSeaLevel_N,
+                m_Config.rs25.seaLevelIsp_s,
+                m_Config.rs25.vacuumIsp_s,
+                m_Config.rs25.OF_ratio);
+            engine->SetStage(0);
+            m_Vessel->AddPart(engine);
+        }
+        
+        for (int i = 0; i < m_Config.srb.engineCount; ++i) {
+            auto srb = PartLibrary::CreateSLSRB(
+                m_Config.srb.thrustSeaLevel_N,
+                m_Config.srb.seaLevelIsp_s,
+                m_Config.srb.vacuumIsp_s,
+                0.0);
+            srb->SetStage(0);
+            m_Vessel->AddPart(srb);
+        }
     }
     
     void BuildFalcon9FlightPlan() {
@@ -540,7 +617,9 @@ private:
         
         if (m_BoosterSeparated && !m_S2Separated && m_S2LoxTank) {
             double s2loxFuel = m_S2LoxTank->GetCurrentFuel();
-            double s2loxCapacity = 75200.0;
+            double s2loxCapacity = (m_Config.secondStageLOX.fuelMass_kg > 0.0) 
+                ? m_Config.secondStageLOX.fuelMass_kg 
+                : 75200.0;
             double loxPercent = s2loxFuel / s2loxCapacity;
             
             if (s2loxFuel <= 0.0 || (loxPercent < 0.10 && altitude > 120000.0)) {
@@ -1064,8 +1143,6 @@ private:
     std::string m_MissionFile;
 };
 
-}
+DeepSpaceApp* CreateDeepSpaceApp();
 
-DeepSpace::DeepSpaceApp* CreateDeepSpaceApp() {
-    return new DeepSpace::DeepSpaceApp();
 }

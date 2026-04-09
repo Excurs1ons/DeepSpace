@@ -10,7 +10,8 @@ namespace DeepSpace {
         LH2,
         LOX,
         MMH,
-        NTO
+        NTO,
+        Solid
     };
 
     class Part {
