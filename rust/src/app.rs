@@ -11,9 +11,10 @@ use std::io::{Write, BufWriter};
 
 use crate::environment::{Atmosphere, Planet, ThermalSimulation};
 use crate::mission::{
-    Artemis2Mission, MissionConfig, MissionControl, MissionOutcome, TelemetryData,
+    MissionConfig, MissionControl, MissionOutcome, MissionScript, TelemetryData,
 };
 use crate::vessel::{Part, PropellantType, Vessel};
+use crate::Vec3;
 
 // =====================================================================
 // CLI 参数解析
@@ -182,7 +183,7 @@ fn build_sls_stack(config: &MissionConfig, vessel: &mut Vessel) {
     p.stage = 1; vessel.add_part(p);
 
     let mut p = Part::new_engine("RL10C-2", 300.0,
-        config.rl10.thrust_n.max(100_000.0),
+        config.rl10.thrust_n,
         config.rl10.sea_level_isp_s.max(200.0),
         config.rl10.vacuum_isp_s.max(400.0),
         PropellantType::Lh2, PropellantType::Lox,
@@ -198,6 +199,19 @@ fn build_sls_stack(config: &MissionConfig, vessel: &mut Vessel) {
         config.core_lox.fuel_mass_kg, PropellantType::Lox);
     p.stage = 0; vessel.add_part(p);
 
+    // SRB solid propellant tanks (one per booster)
+    let srb_dry = if config.srb_fuel.dry_mass_kg > 0.0 { config.srb_fuel.dry_mass_kg } else { 1000.0 };
+    let srb_mass = if config.srb_fuel.fuel_mass_kg > 0.0 { config.srb_fuel.fuel_mass_kg } else { 628_000.0 };
+    for i in 0..config.srb.engine_count.max(2) {
+        let mut p = Part::new_fuel_tank(
+            &format!("SRB-{} Solid", i+1),
+            srb_dry,
+            srb_mass,
+            PropellantType::Solid,
+        );
+        p.stage = 0; vessel.add_part(p);
+    }
+
     for _ in 0..config.rs25.engine_count.max(4) {
         let mut p = Part::new_engine("RS-25", 3_500.0,
             config.rs25.thrust_sea_level_n.max(1_800_000.0),
@@ -208,7 +222,7 @@ fn build_sls_stack(config: &MissionConfig, vessel: &mut Vessel) {
         p.stage = 0; vessel.add_part(p);
     }
     for _ in 0..config.srb.engine_count.max(2) {
-        let mut p = Part::new_engine("SRB", 80_000.0,
+        let mut p = Part::new_engine("SRB", 2_000.0,
             config.srb.thrust_sea_level_n.max(14_000_000.0),
             config.srb.sea_level_isp_s.max(250.0),
             config.srb.vacuum_isp_s.max(280.0),
@@ -230,7 +244,7 @@ fn build_falcon9_stack(config: &MissionConfig, vessel: &mut Vessel) {
 
     let mut p = Part::new_engine("AJ10-190", 200.0,
         config.aj10.thrust_n,
-        config.aj10.sea_level_isp_s.max(250.0),
+        config.aj10.sea_level_isp_s,
         config.aj10.vacuum_isp_s.max(300.0),
         PropellantType::Mmh, PropellantType::Nto,
         config.aj10.of_ratio);
@@ -312,8 +326,9 @@ impl SimulationApp {
                     srb: crate::mission::EngineConfig { engine_count: 2, thrust_sea_level_n: 14_000_000.0, sea_level_isp_s: 242.0, vacuum_isp_s: 269.0, of_ratio: 1.0, ..Default::default() },
                     rl10: crate::mission::EngineConfig { thrust_n: 101_400.0, sea_level_isp_s: 200.0, vacuum_isp_s: 462.0, of_ratio: 5.88, ..Default::default() },
                     aj10: crate::mission::EngineConfig { thrust_n: 27_800.0, sea_level_isp_s: 240.0, vacuum_isp_s: 316.0, ..Default::default() },
-                    core_lh2: crate::mission::TankConfig { dry_mass_kg: 25000.0, fuel_mass_kg: 920_000.0, propellant: "LH2".into(), ..Default::default() },
-                    core_lox: crate::mission::TankConfig { dry_mass_kg: 15000.0, fuel_mass_kg: 240_000.0, propellant: "LOX".into(), ..Default::default() },
+                    core_lh2: crate::mission::TankConfig { dry_mass_kg: 25000.0, fuel_mass_kg: 120_000.0, propellant: "LH2".into(), ..Default::default() },
+                    core_lox: crate::mission::TankConfig { dry_mass_kg: 15000.0, fuel_mass_kg: 720_000.0, propellant: "LOX".into(), ..Default::default() },
+                    srb_fuel: crate::mission::TankConfig { dry_mass_kg: 1000.0, fuel_mass_kg: 628_000.0, propellant: "Solid".into(), ..Default::default() },
                     icps_lh2: crate::mission::TankConfig { dry_mass_kg: 3500.0, fuel_mass_kg: 27_000.0, propellant: "LH2".into(), ..Default::default() },
                     icps_lox: crate::mission::TankConfig { dry_mass_kg: 2000.0, fuel_mass_kg: 8_000.0, propellant: "LOX".into(), ..Default::default() },
                     orion_mmh: crate::mission::TankConfig { dry_mass_kg: 800.0, fuel_mass_kg: 5_000.0, propellant: "MMH".into(), ..Default::default() },
@@ -337,7 +352,7 @@ impl SimulationApp {
 
         // 初始化 MissionControl
         let mut mission_control = MissionControl::new();
-        mission_control.load_mission(&Artemis2Mission::create_default_mission());
+        mission_control.load_mission(&MissionScript::default());
 
         // 激活第一级
         vessel.activate_next_stage();
@@ -385,10 +400,27 @@ impl SimulationApp {
 
         self.simulation_time += dt;
 
-        // 更新发动机 & 推进剂
+        // 发动机 & 推进剂
         let ambient_pressure = self.earth.get_atmosphere().get_pressure(altitude);
         let engine_status = self.vessel.update(dt, ambient_pressure);
         self.vessel.body.update(dt);
+
+        // 重力转弯：根据高度从垂直逐渐转向水平（余弦曲线）
+        {
+            let p_start = self.config.guidance.pitch_start_alt_m;
+            let p_end = self.config.guidance.pitch_end_alt_m;
+            if p_end > p_start && altitude >= p_start {
+                let progress = ((altitude - p_start) / (p_end - p_start)).min(1.0);
+                // 余弦曲线: pitch(°) = 90 × (1 - cos(progress × π/2))
+                // 起点导数=0，平滑过渡；终点=90°（水平）
+                let angle_rad = (std::f64::consts::PI / 2.0 * progress).cos();
+                let pitch_deg = 90.0 * (1.0 - angle_rad);
+                let pitch_rad = pitch_deg * std::f64::consts::PI / 180.0;
+                // sin(pitch)=水平分量, cos(pitch)=垂直分量
+                let dir = Vec3::new(pitch_rad.sin(), pitch_rad.cos(), 0.0);
+                self.vessel.body.set_orientation_from_dir(dir);
+            }
+        }
 
         // MissionControl 更新
         self.mission_control.update(dt, &engine_status, &mut self.vessel, &self.earth);
@@ -396,6 +428,7 @@ impl SimulationApp {
         if engine_status.total_thrust < 1.0
             && engine_status.active_engines == 0
             && self.vessel.current_stage < self.vessel.find_highest_stage()
+            && !self.mission_control.cutoff_fired
         {
             self.vessel.activate_next_stage();
             eprintln!("  T+ {:7.1}s  AUTO_STAGE — Fuel depleted, activating next stage", self.simulation_time);

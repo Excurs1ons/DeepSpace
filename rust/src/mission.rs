@@ -500,6 +500,7 @@ pub struct MissionConfig {
     // 油箱
     pub core_lh2: TankConfig,
     pub core_lox: TankConfig,
+    pub srb_fuel: TankConfig,
     pub icps_lh2: TankConfig,
     pub icps_lox: TankConfig,
     pub orion_mmh: TankConfig,
@@ -531,6 +532,7 @@ impl Default for MissionConfig {
             merlin_vacuum: EngineConfig::default(),
             core_lh2: TankConfig::default(),
             core_lox: TankConfig::default(),
+            srb_fuel: TankConfig::default(),
             icps_lh2: TankConfig::default(),
             icps_lox: TankConfig::default(),
             orion_mmh: TankConfig::default(),
@@ -756,8 +758,14 @@ impl MissionConfig {
             config.icps_lox.propellant = "LOX".into();
         }
 
+        if let Some(sf) = sections.get("srb_fuel") {
+            config.srb_fuel.name = "SRB Solid Propellant".into();
+            config.srb_fuel.fuel_mass_kg = sf.get("solidMass_kg").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            config.srb_fuel.dry_mass_kg = sf.get("solidDry_kg").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            config.srb_fuel.propellant = "Solid".into();
+        }
+
         if let Some(ot) = sections.get("orion_tanks") {
-            config.orion_mmh.name = "Orion MMH Tank".into();
             config.orion_mmh.fuel_mass_kg = ot.get("mmhMass_kg").and_then(|v| v.parse().ok()).unwrap_or(0.0);
             config.orion_mmh.dry_mass_kg = ot.get("mmhDry_kg").and_then(|v| v.parse().ok()).unwrap_or(0.0);
             config.orion_mmh.propellant = "MMH".into();
@@ -824,6 +832,7 @@ pub struct MissionControl {
     pub max_q_time: f64,
     pub max_q_passed: bool,
     pub last_engine_status: EngineStatus,
+    pub cutoff_fired: bool,
 }
 
 impl MissionControl {
@@ -843,6 +852,7 @@ impl MissionControl {
             max_q_time: 0.0,
             max_q_passed: false,
             last_engine_status: EngineStatus::default(),
+            cutoff_fired: false,
         }
     }
 
@@ -862,6 +872,7 @@ impl MissionControl {
         self.summary.target_orbit.apoapsis_m = self.script.target_orbit.apoapsis_km * 1000.0;
         self.summary.target_orbit.periapsis_m = self.script.target_orbit.periapsis_km * 1000.0;
         self.triggered_events.clear();
+        self.cutoff_fired = false;
     }
 
     pub fn update(&mut self, dt: f64, engine_status: &EngineStatus, vessel: &mut Vessel, earth: &Planet) {
@@ -884,6 +895,29 @@ impl MissionControl {
         );
 
         self.execute_commands(&commands, vessel);
+
+        // 自动断油：轨道接近目标时关闭发动机 (仅应用于上面级)
+        if !self.cutoff_fired && self.current_phase == MissionPhase::Orbit && self.mission_time > 100.0 && vessel.current_stage >= 1 {
+            let pos = vessel.body.get_position();
+            let vel = vessel.body.get_velocity();
+            let oe = OrbitalMechanics::calculate_elements(*pos, *vel, earth);
+            if oe.semi_major_axis > 0.0 && oe.eccentricity < 1.0 {
+                // 近地点到地心距离 = a * (1 - e)，减去地球半径得到海拔
+                let periapsis_alt = oe.semi_major_axis * (1.0 - oe.eccentricity) - earth.get_radius();
+                // 目标轨道半长轴（从地心算）
+                let target_sma = ((self.script.target_orbit.apoapsis_km + self.script.target_orbit.periapsis_km) / 2.0) * 1000.0 + earth.get_radius();
+                let _sma_error = (oe.semi_major_axis - target_sma).abs();
+                // 断油条件：轨道稳定（pe>120km）即关机，防止上面级过度燃烧
+                if periapsis_alt > 120_000.0 {
+                    let active_stage = vessel.current_stage;
+                    vessel.set_stage_throttle(active_stage, 0.0);
+                    self.cutoff_fired = true;
+                    eprintln!("  T+ {:7.1}s  THROTTLE_CUTOFF — Stable orbit achieved (pe={:.0}km, a={:.0}m, e={:.4}), engine shutdown",
+                        self.mission_time, periapsis_alt / 1000.0, oe.semi_major_axis, oe.eccentricity);
+                }
+            }
+        }
+
         self.check_exit_conditions(vessel, earth);
     }
 
@@ -1063,131 +1097,6 @@ impl MissionControl {
 
     fn get_current_velocity(&self, vessel: &Vessel) -> f64 {
         vessel.body.get_velocity().length()
-    }
-}
-
-// =====================================================================
-// Artemis2Mission
-// =====================================================================
-pub struct Artemis2Mission;
-
-impl Artemis2Mission {
-    pub fn create_default_mission() -> MissionScript {
-        let mut script = MissionScript::default();
-        script.name = "Artemis II Automated".into();
-        script.description = "Fully automated Artemis II mission profile".into();
-        script.target_orbit.apoapsis_km = 185.0;
-        script.target_orbit.periapsis_km = 180.0;
-        script.target_orbit.inclination_deg = 28.5;
-        script.max_duration_s = 7200.0;
-        script.auto_mode = true;
-
-        // Event: launch
-        script.events.push(MissionEvent {
-            name: "launch".into(),
-            description: "Main core engine ignition and liftoff".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::TimeElapsed, 0.0)],
-            commands: vec![Command::LogMessage { message: "T-0: Main engines at full thrust".into() }],
-            ..Default::default()
-        });
-
-        // Event: maxq_throttle
-        script.events.push(MissionEvent {
-            name: "maxq_throttle".into(),
-            description: "Reduce throttle at max-Q".into(),
-            triggers: vec![
-                TriggerCondition::new(TriggerType::AltitudeAbove, 9500.0),
-                TriggerCondition::new(TriggerType::MaxqPassed, 1000.0),
-            ],
-            commands: vec![Command::SetThrottle { stage: 2, value: 0.72 }],
-            ..Default::default()
-        });
-
-        // Event: booster_separation
-        script.events.push(MissionEvent {
-            name: "booster_separation".into(),
-            description: "SRB separation at burnout".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::TimeElapsed, 126.0)],
-            commands: vec![
-                Command::StageSeparation { stage: 0 },
-                Command::LogMessage { message: "SRB separation - core stage continues burn".into() },
-            ],
-            ..Default::default()
-        });
-
-        // Event: core_stage_separation
-        script.events.push(MissionEvent {
-            name: "core_stage_separation".into(),
-            description: "SLS core stage separation and ICPS ignition".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::TimeElapsed, 480.0)],
-            commands: vec![
-                Command::StageSeparation { stage: 1 },
-                Command::LogMessage { message: "Core stage separated - ICPS ignited for orbit insertion".into() },
-            ],
-            ..Default::default()
-        });
-
-        // Event: icps_cutoff
-        script.events.push(MissionEvent {
-            name: "icps_cutoff".into(),
-            description: "ICPS burnout / orbit insertion complete".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::ApoapsisAbove, 185000.0)],
-            commands: vec![Command::LogMessage { message: "Orbit insertion complete - ICPS cutoff".into() }],
-            ..Default::default()
-        });
-
-        // Event: icps_ignition
-        script.events.push(MissionEvent {
-            name: "icps_ignition".into(),
-            description: "ICPS upper stage ignition".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::StageActivated, 2.0)],
-            commands: vec![Command::LogMessage { message: "Orion propulsion takeover - TLI prep".into() }],
-            ..Default::default()
-        });
-
-        // Event: orbit_insertion (altitude)
-        script.events.push(MissionEvent {
-            name: "orbit_insertion".into(),
-            description: "Confirm orbit insertion".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::AltitudeAbove, 100000.0)],
-            commands: vec![Command::LogMessage { message: "Orbit insertion complete - stable orbit achieved".into() }],
-            ..Default::default()
-        });
-
-        // Event: orbit_insertion (apoapsis)
-        script.events.push(MissionEvent {
-            name: "orbit_insertion".into(),
-            description: "Confirm orbit insertion".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::ApoapsisAbove, 180000.0)],
-            commands: vec![Command::LogMessage { message: "Target orbit achieved - stable orbit confirmed".into() }],
-            ..Default::default()
-        });
-
-        script
-    }
-
-    pub fn create_damage_scenario() -> MissionScript {
-        let mut script = Self::create_default_mission();
-        script.name = "Artemis II Damage Scenario".into();
-        script.description = "Automated mission with random damage events".into();
-
-        script.events.push(MissionEvent {
-            name: "micrometeorite_impact".into(),
-            description: "Micrometeorite impacts TPS".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::TimeElapsed, 30.0)],
-            commands: vec![Command::TriggerDamage { message: "Micrometeorite impact at T+30s - TPS damaged".into() }],
-            ..Default::default()
-        });
-
-        script.events.push(MissionEvent {
-            name: "structural_stress".into(),
-            description: "Max-Q structural stress event".into(),
-            triggers: vec![TriggerCondition::new(TriggerType::MaxqPassed, 30000.0)],
-            commands: vec![Command::TriggerDamage { message: "Severe structural stress - hull integrity reduced".into() }],
-            ..Default::default()
-        });
-
-        script
     }
 }
 
@@ -1399,23 +1308,16 @@ mod tests {
     }
 
     #[test]
-    fn test_artemis2_default_mission() {
-        let script = Artemis2Mission::create_default_mission();
-        assert_eq!(script.name, "Artemis II Automated");
-        assert!(!script.events.is_empty());
+    fn test_default_mission_script() {
+        let script = MissionScript::default();
+        assert!(script.events.is_empty());
         assert_eq!(script.target_orbit.apoapsis_km, 185.0);
-
-        // Should have 6 events: launch, maxq_throttle, booster_separation,
-        // icps_ignition, orbit_insertion (alt), orbit_insertion (apoapsis)
-        assert!(script.events.len() >= 2);
     }
 
     #[test]
-    fn test_artemis2_damage_scenario() {
-        let script = Artemis2Mission::create_damage_scenario();
-        assert_eq!(script.name, "Artemis II Damage Scenario");
-        let has_damage = script.events.iter().any(|e| e.name.contains("micrometeorite"));
-        assert!(has_damage);
+    fn test_default_mission_empty_events() {
+        let script = MissionScript::default();
+        assert!(script.events.is_empty());
     }
 
     #[test]
@@ -1595,12 +1497,9 @@ mod tests {
     }
 
     #[test]
-    fn test_damage_scenario_check_events() {
-        let script = Artemis2Mission::create_damage_scenario();
-        let has_micro = script.events.iter().any(|e| e.name == "micrometeorite_impact");
-        let has_stress = script.events.iter().any(|e| e.name == "structural_stress");
-        assert!(has_micro);
-        assert!(has_stress);
+    fn test_default_script_events_empty() {
+        let script = MissionScript::default();
+        assert!(script.events.is_empty());
     }
 
     #[test]
@@ -1611,10 +1510,10 @@ mod tests {
     }
 
     #[test]
-    fn test_mission_control_load_mission() {
+    fn test_mission_control_load_script() {
         let mut mc = MissionControl::new();
-        let script = Artemis2Mission::create_default_mission();
+        let script = MissionScript::default();
         mc.load_mission(&script);
-        assert_eq!(mc.script.name, "Artemis II Automated");
+        assert!(mc.script.events.is_empty());
     }
 }
