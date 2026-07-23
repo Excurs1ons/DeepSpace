@@ -5,6 +5,7 @@ pub mod physics;
 pub mod mission;
 pub mod vessel;
 pub mod app;
+pub mod scene;
 
 // =====================================================================
 // 基础 3D 向量

@@ -1,0 +1,22 @@
+[scene]
+name = Chenciner-Montgomery Figure-8
+dt = 0.006326
+integrator = symplectic4
+duration = 6325.9
+adaptive = false
+softening = 0
+
+[body.A]
+mass = 14981318614.877; radius = 0.01
+pos.x = -0.97000436; pos.y = 0.24308753; pos.z = 0
+vel.x = 0.466203685; vel.y = 0.43236573; vel.z = 0
+
+[body.B]
+mass = 14981318614.877; radius = 0.01
+pos.x = 0; pos.y = 0; pos.z = 0
+vel.x = -0.93240737; vel.y = -0.86473146; vel.z = 0
+
+[body.C]
+mass = 14981318614.877; radius = 0.01
+pos.x = 0.97000436; pos.y = -0.24308753; pos.z = 0
+vel.x = 0.466203685; vel.y = 0.43236573; vel.z = 0

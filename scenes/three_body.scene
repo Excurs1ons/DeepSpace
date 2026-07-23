@@ -1,0 +1,23 @@
+[scene]
+name = Star + 2 planets (hierarchical)
+dt = 10000.0
+integrator = symplectic4
+duration = 3.15576e11
+adaptive = true
+softening = 1e6
+csv = three_body.csv
+
+[body.Star]
+mass = 1.989e30; radius = 6.96e8
+pos.x = 0; pos.y = 0; pos.z = 0
+vel.x = 0; vel.y = 0; vel.z = 0
+
+[body.Inner]
+mass = 5.972e24; radius = 6.371e6
+pos.x = 7.48e10; pos.y = 0; pos.z = 0
+vel.x = 0; vel.y = 42000; vel.z = 0
+
+[body.Outer]
+mass = 1.898e27; radius = 6.991e7
+pos.x = 0; pos.y = 5.0e11; pos.z = 0
+vel.x = -13000; vel.y = 0; vel.z = 0
