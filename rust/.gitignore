@@ -1,6 +1,0 @@
-target/
-*.csv
-test_*.csv
-*.profraw
-*.swp
-*.swo

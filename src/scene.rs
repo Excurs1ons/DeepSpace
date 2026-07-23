@@ -419,9 +419,9 @@ impl SceneRuntime {
 // 内置示例场景（可直接在代码中使用）
 // ---------------------------------------------------------------
 
-pub const SCENE_SOLAR_SYSTEM: &str = include_str!("../../scenes/solar_system.scene");
-pub const SCENE_FIGURE8: &str = include_str!("../../scenes/figure8.scene");
-pub const SCENE_THREE_BODY: &str = include_str!("../../scenes/three_body.scene");
+pub const SCENE_SOLAR_SYSTEM: &str = include_str!("../scenes/solar_system.scene");
+pub const SCENE_FIGURE8: &str = include_str!("../scenes/figure8.scene");
+pub const SCENE_THREE_BODY: &str = include_str!("../scenes/three_body.scene");
 
 // ---------------------------------------------------------------
 // 测试

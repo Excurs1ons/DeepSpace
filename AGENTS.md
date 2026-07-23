@@ -1,15 +1,12 @@
 # Repository Guidelines
 
 ## 项目定位
-`DeepSpace` — Rust 航天模拟引擎与宇宙沙盘。核心引擎在 `rust/` 目录下，
-提供 N 体引力辛积分器（Leapfrog/Yoshida4）、场景化沙箱仿真、轨道力学等。
+`DeepSpace` — Rust 航天模拟引擎与宇宙沙盘。核心引擎提供 N 体引力辛积分器（Leapfrog/Yoshida4）、场景化沙箱仿真、轨道力学等。
 支持热切换场景文件，适合数亿年尺度的混沌三体模拟。
 
 ## 构建与运行
 
 ```bash
-cd rust
-
 # 全量测试
 cargo test --lib
 
@@ -17,7 +14,7 @@ cargo test --lib
 cargo run --bin rocket-sim -- --headless
 
 # N体宇宙沙盘
-cargo run --bin nbody-sim -- --scene ../scenes/three_body.scene --csv output.csv
+cargo run --bin nbody-sim -- --scene scenes/three_body.scene --csv output.csv
 
 # 场景热切换（运行时写入切换文件）
 echo "/path/to/new_scene.scene" > /tmp/switch
@@ -80,4 +77,4 @@ cargo test --lib scene    # 场景系统测试（13）
 ## 配置与仓库卫生
 - 不提交构建产物：`target/`、`*.csv`。
 - 场景文件放 `scenes/`，不被编译。
-- 此 `AGENTS.md` 为 AI 辅助开发指南，与 `rust/AGENTS.md` 互补。
+- 此 `AGENTS.md` 为 AI 辅助开发指南。

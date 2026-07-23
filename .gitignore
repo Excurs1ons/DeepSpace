@@ -9,3 +9,7 @@ test_scene_*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Editor swap files
+*.swp
+*.swo
