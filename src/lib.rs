@@ -7,6 +7,7 @@ pub mod mission;
 pub mod vessel;
 pub mod app;
 pub mod scene;
+pub mod space_physics;
 
 // =====================================================================
 // 基础 3D 向量
