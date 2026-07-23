@@ -2,6 +2,7 @@ pub mod frame_graph;
 pub mod core;
 pub mod environment;
 pub mod physics;
+pub mod guidance;
 pub mod mission;
 pub mod vessel;
 pub mod app;

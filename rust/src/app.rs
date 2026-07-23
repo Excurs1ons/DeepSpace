@@ -10,11 +10,10 @@ use std::fs::File;
 use std::io::{Write, BufWriter};
 
 use crate::environment::{Atmosphere, Planet, ThermalSimulation};
-use crate::mission::{
-    MissionConfig, MissionControl, MissionOutcome, MissionScript, TelemetryData,
-};
+use crate::guidance::{FlightComputer, GuidanceState};
+use crate::mission::{MissionConfig, MissionControl, MissionOutcome, MissionScript, TelemetryData};
+
 use crate::vessel::{Part, PropellantType, Vessel};
-use crate::Vec3;
 
 // =====================================================================
 // CLI 参数解析
@@ -302,6 +301,7 @@ pub struct SimulationApp {
     pub telemetry_log: Vec<TelemetryData>,
     pub csv_path: Option<String>,
     pub dt: f64,
+    pub flight_computer: FlightComputer,
 }
 
 impl SimulationApp {
@@ -354,6 +354,14 @@ impl SimulationApp {
         let mut mission_control = MissionControl::new();
         mission_control.load_mission(&MissionScript::default());
 
+        // 初始化飞控计算机
+        let mut gc = crate::guidance::GuidanceConfig::default();
+        gc.algorithm = config.guidance.algorithm.clone();
+        gc.pitch_start_alt_m = config.guidance.pitch_start_alt_m;
+        gc.pitch_end_alt_m = config.guidance.pitch_end_alt_m;
+        gc.pitch_end_angle_deg = config.guidance.pitch_end_angle_deg;
+        let flight_computer = FlightComputer::from_config(&gc);
+
         // 激活第一级
         vessel.activate_next_stage();
 
@@ -369,6 +377,7 @@ impl SimulationApp {
             telemetry_log: Vec::new(),
             csv_path: args.csv_path.clone(),
             dt: args.dt,
+            flight_computer,
         }
     }
 
@@ -405,30 +414,34 @@ impl SimulationApp {
         let engine_status = self.vessel.update(dt, ambient_pressure);
         self.vessel.body.update(dt);
 
-        // 重力转弯：根据高度从垂直逐渐转向水平（余弦曲线）
-        {
-            let p_start = self.config.guidance.pitch_start_alt_m;
-            let p_end = self.config.guidance.pitch_end_alt_m;
-            if p_end > p_start && altitude >= p_start {
-                let progress = ((altitude - p_start) / (p_end - p_start)).min(1.0);
-                // 余弦曲线: pitch(°) = 90 × (1 - cos(progress × π/2))
-                // 起点导数=0，平滑过渡；终点=90°（水平）
-                let angle_rad = (std::f64::consts::PI / 2.0 * progress).cos();
-                let pitch_deg = 90.0 * (1.0 - angle_rad);
-                let pitch_rad = pitch_deg * std::f64::consts::PI / 180.0;
-                // sin(pitch)=水平分量, cos(pitch)=垂直分量
-                let dir = Vec3::new(pitch_rad.sin(), pitch_rad.cos(), 0.0);
-                self.vessel.body.set_orientation_from_dir(dir);
-            }
-        }
+        // 飞控计算制导指令（余弦重力转弯等）
+        let state = GuidanceState {
+            altitude,
+            velocity_mag: speed,
+            position: self.vessel.body.get_position().clone(),
+            velocity: self.vessel.body.get_velocity().clone(),
+            mission_time: self.simulation_time,
+            total_mass_kg: self.vessel.body.get_mass(),
+            stage: self.vessel.current_stage,
+            throttle: engine_status.max_throttle,
+        };
+        let cmd = self.flight_computer.update(&state);
+        self.vessel
+            .body
+            .set_orientation_from_dir(cmd.thrust_direction);
+        // 应用制导油门（在 mission_control 之前，让 mission_control 有最终决定权）
+        let active_stage = self.vessel.current_stage;
+        self.vessel.set_stage_throttle(active_stage, cmd.throttle);
 
         // MissionControl 更新
         self.mission_control.update(dt, &engine_status, &mut self.vessel, &self.earth);
         // 自动级分离：当前级燃料耗尽且有后续级时触发
+        // 注意：滑行阶段（coasting=true）不算燃料耗尽，跳过自动级分离
         if engine_status.total_thrust < 1.0
             && engine_status.active_engines == 0
             && self.vessel.current_stage < self.vessel.find_highest_stage()
             && !self.mission_control.cutoff_fired
+            && !self.mission_control.coasting
         {
             self.vessel.activate_next_stage();
             eprintln!("  T+ {:7.1}s  AUTO_STAGE — Fuel depleted, activating next stage", self.simulation_time);

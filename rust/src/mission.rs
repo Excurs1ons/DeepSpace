@@ -572,13 +572,23 @@ pub struct TankConfig {
 
 #[derive(Debug, Clone)]
 pub struct GuidanceConfig {
+    pub algorithm: String,
     pub pitch_start_alt_m: f64,
     pub pitch_end_alt_m: f64,
+    pub pitch_end_angle_deg: f64,
     pub orbit_tolerance_m: f64,
 }
 
 impl Default for GuidanceConfig {
-    fn default() -> Self { GuidanceConfig { pitch_start_alt_m: 2000.0, pitch_end_alt_m: 20000.0, orbit_tolerance_m: 10000.0 } }
+    fn default() -> Self {
+        GuidanceConfig {
+            algorithm: "cosine".into(),
+            pitch_start_alt_m: 2000.0,
+            pitch_end_alt_m: 20000.0,
+            pitch_end_angle_deg: 85.0,
+            orbit_tolerance_m: 10000.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -790,8 +800,10 @@ impl MissionConfig {
         }
 
         if let Some(g) = sections.get("guidance") {
+            config.guidance.algorithm = g.get("algorithm").cloned().unwrap_or_else(|| "cosine".into());
             config.guidance.pitch_start_alt_m = g.get("pitchStartAlt_m").and_then(|v| v.parse().ok()).unwrap_or(2000.0);
             config.guidance.pitch_end_alt_m = g.get("pitchEndAlt_m").and_then(|v| v.parse().ok()).unwrap_or(20000.0);
+            config.guidance.pitch_end_angle_deg = g.get("pitchEndAngle_deg").and_then(|v| v.parse().ok()).unwrap_or(85.0);
             config.guidance.orbit_tolerance_m = g.get("orbitTolerance_m").and_then(|v| v.parse().ok()).unwrap_or(10000.0);
         }
 
@@ -833,6 +845,11 @@ pub struct MissionControl {
     pub max_q_passed: bool,
     pub last_engine_status: EngineStatus,
     pub cutoff_fired: bool,
+    /// 滑行阶段：MECO 后等待远地点再烧 ICPS
+    pub coasting: bool,
+    pub coast_start_time: f64,
+    pub icps_ignited: bool,
+    pub icps_ignition_time: f64,
 }
 
 impl MissionControl {
@@ -853,6 +870,10 @@ impl MissionControl {
             max_q_passed: false,
             last_engine_status: EngineStatus::default(),
             cutoff_fired: false,
+            coasting: false,
+            coast_start_time: 0.0,
+            icps_ignited: false,
+            icps_ignition_time: 0.0,
         }
     }
 
@@ -873,6 +894,10 @@ impl MissionControl {
         self.summary.target_orbit.periapsis_m = self.script.target_orbit.periapsis_km * 1000.0;
         self.triggered_events.clear();
         self.cutoff_fired = false;
+        self.coasting = false;
+        self.coast_start_time = 0.0;
+        self.icps_ignited = false;
+        self.icps_ignition_time = 0.0;
     }
 
     pub fn update(&mut self, dt: f64, engine_status: &EngineStatus, vessel: &mut Vessel, earth: &Planet) {
@@ -896,24 +921,64 @@ impl MissionControl {
 
         self.execute_commands(&commands, vessel);
 
-        // 自动断油：轨道接近目标时关闭发动机 (仅应用于上面级)
+        // ICPS 三阶段：滑行 → 远地点点火 → 圆化断油
+        // 配合 PEGGuidance（stage≥1 时沿速度方向推进）
         if !self.cutoff_fired && self.current_phase == MissionPhase::Orbit && self.mission_time > 100.0 && vessel.current_stage >= 1 {
-            let pos = vessel.body.get_position();
-            let vel = vessel.body.get_velocity();
-            let oe = OrbitalMechanics::calculate_elements(*pos, *vel, earth);
+            let pos = *vessel.body.get_position(); // copy to drop borrow
+            let vel = *vessel.body.get_velocity(); // copy to drop borrow
+            let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
             if oe.semi_major_axis > 0.0 && oe.eccentricity < 1.0 {
-                // 近地点到地心距离 = a * (1 - e)，减去地球半径得到海拔
-                let periapsis_alt = oe.semi_major_axis * (1.0 - oe.eccentricity) - earth.get_radius();
-                // 目标轨道半长轴（从地心算）
-                let target_sma = ((self.script.target_orbit.apoapsis_km + self.script.target_orbit.periapsis_km) / 2.0) * 1000.0 + earth.get_radius();
-                let _sma_error = (oe.semi_major_axis - target_sma).abs();
-                // 断油条件：轨道稳定（pe>120km）即关机，防止上面级过度燃烧
-                if periapsis_alt > 120_000.0 {
+                let periapsis_alt =
+                    oe.semi_major_axis * (1.0 - oe.eccentricity) - earth.get_radius();
+                let apoapsis_alt =
+                    oe.semi_major_axis * (1.0 + oe.eccentricity) - earth.get_radius();
+
+                if !self.coasting {
+                    self.coasting = true;
+                    self.coast_start_time = self.mission_time;
+                    // 自动级分离后 ICPS 默认油门=1.0，立即归零开始滑行
                     let active_stage = vessel.current_stage;
                     vessel.set_stage_throttle(active_stage, 0.0);
-                    self.cutoff_fired = true;
-                    eprintln!("  T+ {:7.1}s  THROTTLE_CUTOFF — Stable orbit achieved (pe={:.0}km, a={:.0}m, e={:.4}), engine shutdown",
-                        self.mission_time, periapsis_alt / 1000.0, oe.semi_major_axis, oe.eccentricity);
+                    eprintln!("  T+ {:7.1}s  MECO — Coasting to apogee (pe={:.0}km, ap={:.0}km, e={:.4})",
+                        self.mission_time, periapsis_alt/1000.0, apoapsis_alt/1000.0, oe.eccentricity);
+                }
+
+                if !self.icps_ignited {
+                    // 远地点检测：r·v 从正→负（上升→下降），且至少滑行 200s
+                    let r_dot_v = pos.x * vel.x + pos.y * vel.y + pos.z * vel.z;
+                    let coast_dur = self.mission_time - self.coast_start_time;
+                    let at_apogee = coast_dur > 200.0 && r_dot_v < 0.0;
+                    let timeout = coast_dur > 3600.0; // 安全超时 1h
+
+                    if at_apogee || timeout {
+                        self.icps_ignited = true;
+                        self.icps_ignition_time = self.mission_time;
+                        let active_stage = vessel.current_stage;
+                        vessel.set_stage_throttle(active_stage, 1.0);
+                        eprintln!("  T+ {:7.1}s  ICPS Ignition @ apogee (pe={:.0}km, ap={:.0}km)",
+                            self.mission_time, periapsis_alt/1000.0, apoapsis_alt/1000.0);
+                    }
+                }
+
+                // ── 阶段 2：圆化燃烧 ──
+                if self.icps_ignited {
+                    let pe_km = periapsis_alt / 1000.0;
+                    let ap_km = apoapsis_alt / 1000.0;
+                    let pe_diff_km = ap_km - pe_km;
+                    let burn_duration = self.mission_time - self.icps_ignition_time;
+
+                    // 在远地点附近单次 prograde 燃烧：近地点持续抬升
+                    // 当近地点接近远地点（轨道近乎圆形）时断油
+                    // 推进剂耗尽时自然熄火——此处提前断油避免过烧
+                    // 最佳断油时间：~120s（~342m/s ΔV 可完成圆化），超过 200s 后
+                    // 飞船会过近地点，prograde 燃烧反而拉高远地点
+                    if pe_diff_km < 50.0 || burn_duration > 200.0 {
+                        let active_stage = vessel.current_stage;
+                        vessel.set_stage_throttle(active_stage, 0.0);
+                        self.cutoff_fired = true;
+                        eprintln!("  T+ {:7.1}s  Orbit circularized (pe={:.0}km, ap={:.0}km, e={:.4})",
+                            self.mission_time, pe_km, ap_km, oe.eccentricity);
+                    }
                 }
             }
         }
@@ -978,7 +1043,9 @@ impl MissionControl {
         }
         data.max_q_pa = self.max_q;
 
-        if self.max_q > 1000.0 && !self.max_q_passed {
+        // MaxQ 峰值识别：当动压超过 30kPa 且不再增长时标记（约真实 SLS MaxQ 水平）
+        let q_decreasing = self.mission_time > 10.0 && data.dynamic_pressure_pa < self.max_q * 0.95;
+        if self.max_q > 30_000.0 && q_decreasing && !self.max_q_passed {
             self.max_q_passed = true;
             self.trigger_event("MaxQ_Pass", "Dynamic pressure peak passed");
         }
