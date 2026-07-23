@@ -432,14 +432,13 @@ pub fn draw_attitude_indicator_2d(
 // 2D 正交投影渲染 — 整个场景为 2D HUD
 // =====================================================================
 
-/// 画 2D 圆环（线段近似）
-pub fn draw_circle_2d(cx: f32, cy: f32, radius: f32, segments: u32, color: Color) {
-    if radius < 0.5 {
-        draw_line(cx, cy, cx, cy, 1.0, color);
-        return;
-    }
-    let step = std::f32::consts::TAU / segments.max(6) as f32;
-    for i in 0..segments {
+/// 画 2D 圆环（自适应分段，大圆用更多段避免锯齿）
+pub fn draw_circle_2d(cx: f32, cy: f32, radius: f32, color: Color) {
+    if radius < 0.5 { return; }
+    // 像素半径越大段数越多，保证视觉平滑。放大后可达 256 段
+    let segs = (12.0 + radius * 0.3).min(256.0) as u32;
+    let step = std::f32::consts::TAU / segs as f32;
+    for i in 0..segs {
         let a0 = i as f32 * step;
         let a1 = (i + 1) as f32 * step;
         let (s0, c0) = a0.sin_cos();
@@ -457,7 +456,7 @@ pub fn draw_earth_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32
     let (cx, cy) = camera.project_2d(Vec3::ZERO, sw, sh);
     let r = camera.len_to_px(earth_radius, sw, sh);
     // 地球轮廓
-    draw_circle_2d(cx, cy, r, 48, COLOR_EARTH);
+    draw_circle_2d(cx, cy, r, COLOR_EARTH);
     // 地心十字
     let cross = 6.0_f32.max(r * 0.04);
     draw_line(cx - cross, cy, cx + cross, cy, 1.0, COLOR_EARTH);
@@ -470,17 +469,19 @@ pub fn draw_earth_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32
 /// 旋转相机时呈现不同剖面（椭圆/线）。
 pub fn draw_grid_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32) {
     const RINGS: [f32; 5] = [1.5, 2.0, 3.0, 5.0, 10.0];
-    const SEGMENTS: u32 = 48;
     const SPOKES: u32 = 12;
     const CENTER: Vec3 = Vec3::ZERO;
 
-    // 1. 同心环投影到 2D
+    // 1. 同心环投影到 2D（自适应分段）
     for &mult in &RINGS {
         let r = earth_radius * mult;
-        let step = std::f32::consts::TAU / SEGMENTS as f32;
+        // 根据投影后的像素半径决定分段数，保证视觉平滑
+        let pixel_r = camera.len_to_px(r, sw, sh);
+        let segs = (12.0 + pixel_r * 0.3).min(256.0) as u32;
+        let step = std::f32::consts::TAU / segs as f32;
         let mut prev = None;
-        for i in 0..=SEGMENTS {
-            let a = ((i % SEGMENTS) as f32) * step;
+        for i in 0..=segs {
+            let a = ((i % segs) as f32) * step;
             let p3d = CENTER + Vec3::new(a.cos() * r, 0.0, a.sin() * r);
             let (x, y) = camera.project_2d(p3d, sw, sh);
             if let Some((px, py)) = prev {
@@ -534,7 +535,7 @@ pub fn draw_path_2d(
     }
 }
 
-/// 投影绘制预测轨道（虚线隔段画）
+/// 投影绘制预测轨道（虚线：所有段都画，交替透明度）
 pub fn draw_predicted_path_2d(
     camera: &OrbitalCamera,
     points: &[deepspace::Vec3],
@@ -544,12 +545,15 @@ pub fn draw_predicted_path_2d(
     if points.len() < 2 {
         return;
     }
-    for i in (0..points.len() - 1).step_by(2) {
+    // 画所有段，奇偶交替透明度实现虚线效果，不损失分辨率
+    let mut c = color;
+    for i in 0..points.len() - 1 {
+        c.a = if i % 2 == 0 { color.a } else { color.a * 0.2 };
         let p0 = Vec3::new(points[i].x as f32, points[i].y as f32, points[i].z as f32);
         let p1 = Vec3::new(points[i + 1].x as f32, points[i + 1].y as f32, points[i + 1].z as f32);
         let (x1, y1) = camera.project_2d(p0, sw, sh);
         let (x2, y2) = camera.project_2d(p1, sw, sh);
-        draw_line(x1, y1, x2, y2, 1.0, color);
+        draw_line(x1, y1, x2, y2, 1.0, c);
     }
 }
 
@@ -565,7 +569,7 @@ pub fn draw_rocket_2d(
 
     // 火箭位置圆点
     let marker_r = camera.len_to_px(2000.0_f32.max(earth_radius * 0.003), sw, sh).max(2.5);
-    draw_circle_2d(rx, ry, marker_r, 10, COLOR_SHIP);
+    draw_circle_2d(rx, ry, marker_r, COLOR_SHIP);
 
     // 速度方向箭头（纯 2D 屏幕空间，固定像素长度）
     let speed = vel.length();
@@ -636,6 +640,117 @@ pub fn draw_meridian_3d(center: Vec3, radius: f32, segments: u32, color: Color) 
         let p0 = center + Vec3::new(0.0, a0.sin() * radius, a0.cos() * radius);
         let p1 = center + Vec3::new(0.0, a1.sin() * radius, a1.cos() * radius);
         draw_line_3d(p0, p1, color);
+    }
+}
+
+// =====================================================================
+// 任务导航面板（HUD 右侧）— 阶段 + 任务双层显示
+// =====================================================================
+
+/// Artemis II 全任务阶段（粗粒度飞行阶段）
+const ARTEMIS_PHASES: &[&str] = &[
+    "PRE_LAUNCH",
+    "LAUNCH",
+    "ASCENT",
+    "ORBIT",
+    "TLI",
+    "TRANSLUNAR",
+    "LUNAR_FLYBY",
+    "RETURN",
+    "REENTRY",
+    "SUCCESS",
+];
+
+/// Artemis II 具体任务里程碑（细粒度事件步骤）
+const ARTEMIS_TASKS: &[&str] = &[
+    "Liftoff",
+    "SRB Separation",
+    "MaxQ",
+    "MECO / Staging",
+    "ICPS Circularization",
+    "TLI Burn",
+    "Orion Separation",
+    "Lunar Flyby",
+    "Return Cruise",
+    "SM Separation",
+    "Reentry",
+    "Splashdown",
+];
+
+/// 任务显示状态（由火箭-sim 主循环计算后传入）
+pub struct MissionDisplayState {
+    /// 当前阶段在 ARTEMIS_PHASES 中的索引
+    pub phase_idx: Option<usize>,
+    /// 已完成的任务数（0..=ARTEMIS_TASKS.len）
+    pub tasks_done: usize,
+    /// 当前高亮任务（正在执行的那一步）
+    pub task_highlight: Option<usize>,
+    /// 是否已完成
+    pub complete: bool,
+    /// 结果字符串（SUCCESS/FAILURE/ABORT/TIMEOUT）
+    pub outcome: String,
+}
+
+/// 绘制阶段时间线面板（粗粒度，右侧上方）
+pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
+    let line_h = 18.0;
+
+    draw_text("PHASE", x, y, 14.0, Color::new(0.6, 0.7, 0.9, 0.8));
+
+    for (i, &name) in ARTEMIS_PHASES.iter().enumerate() {
+        let py = y + 6.0 + i as f32 * line_h;
+
+        let (icon, color) = if state.complete {
+            // 任务结束：全部灰化，仅结果高亮
+            ("\u{2713}", Color::new(0.3, 0.4, 0.4, 0.5))
+        } else if state.phase_idx.map_or(false, |c| i < c) {
+            ("\u{2713}", Color::new(0.4, 0.5, 0.5, 0.5))       // ✓ 已完成
+        } else if state.phase_idx.map_or(false, |c| i == c) {
+            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0))       // ▶ 当前
+        } else {
+            ("\u{25CB}", Color::new(0.3, 0.3, 0.4, 0.6))       // ○ 待执行
+        };
+
+        draw_text(icon, x, py, 12.0, color);
+        draw_text(name, x + 16.0, py, 12.0, color);
+    }
+
+    if state.complete {
+        let rc = match state.outcome.as_str() {
+            "SUCCESS" => Color::new(0.2, 1.0, 0.3, 1.0),
+            "FAILURE" => Color::new(1.0, 0.2, 0.2, 1.0),
+            _ => Color::new(1.0, 0.8, 0.2, 1.0),
+        };
+        draw_text(
+            &format!("OUTCOME: {}", state.outcome),
+            x, y + 6.0 + ARTEMIS_PHASES.len() as f32 * line_h + 4.0,
+            14.0, rc,
+        );
+    }
+}
+
+/// 绘制任务里程碑面板（细粒度，右侧下方）
+pub fn draw_task_panel(state: &MissionDisplayState, x: f32, y: f32) {
+    let line_h = 16.0;
+
+    draw_text("TASKS", x, y, 14.0, Color::new(0.6, 0.7, 0.9, 0.8));
+
+    for (i, &name) in ARTEMIS_TASKS.iter().enumerate() {
+        let py = y + 6.0 + i as f32 * line_h;
+
+        let done = i < state.tasks_done;
+        let active = state.task_highlight.map_or(false, |h| i == h);
+
+        let (icon, color) = if done {
+            ("\u{2713}", Color::new(0.35, 0.45, 0.45, 0.5))      // ✓ 已完成
+        } else if active {
+            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0))          // ▶ 执行中
+        } else {
+            ("\u{25CB}", Color::new(0.25, 0.25, 0.35, 0.5))       // ○ 待执行
+        };
+
+        draw_text(icon, x, py, 11.0, color);
+        draw_text(name, x + 14.0, py, 11.0, color);
     }
 }
 

@@ -55,13 +55,29 @@ async fn viz_main(args: CliArgs) {
         if is_key_pressed(KeyCode::T) {
             track_rocket = !track_rocket;
         }
-        // 时间倍率：右键 ×2，左键 ×0.5，范围 [-200, 200]
-        // 负值 = 倒放
+        // 时间倍率：基数为 10，范围 [-1000, 1000]
+        // 正向：0.001 → 0.01 → 0.1 → 1 → 10 → 100 → 1000
+        // 反向：-0.001 → -0.01 → -0.1 → -1 → -10 → -100 → -1000
+        // 在 0.001/-0.001 处跨越正负（无 0 档）
         if is_key_pressed(KeyCode::Right) {
-            time_warp = (time_warp * 2.0).min(200.0);
+            if time_warp.abs() < 0.001 {
+                time_warp = 0.001;
+            } else if time_warp < 0.0 {
+                time_warp /= 10.0;
+                if time_warp.abs() < 0.001 { time_warp = 0.001; }
+            } else {
+                time_warp = (time_warp * 10.0).min(1000.0);
+            }
         }
         if is_key_pressed(KeyCode::Left) {
-            time_warp = (time_warp * 0.5).max(-200.0);
+            if time_warp.abs() < 0.001 {
+                time_warp = -0.001;
+            } else if time_warp > 0.0 {
+                time_warp /= 10.0;
+                if time_warp.abs() < 0.001 { time_warp = -0.001; }
+            } else {
+                time_warp = (time_warp * 10.0).max(-1000.0);
+            }
         }
 
         // -----------------------------------------------------------------
@@ -77,7 +93,7 @@ async fn viz_main(args: CliArgs) {
             }
 
             let pos = to_mvec3(*app.vessel.body.get_position());
-            if flight_path.len() < 5000 {
+            if flight_path.len() < 20000 {
                 flight_path.push(pos);
             }
             if track_rocket {
@@ -90,7 +106,7 @@ async fn viz_main(args: CliArgs) {
             let current_pos = *app.vessel.body.get_position();
             let current_vel = *app.vessel.body.get_velocity();
             if current_vel.length() > 10.0 {
-                let raw = predict_trajectory(current_pos, current_vel, EARTH_MU, 15000.0, 150, app.earth.get_radius());
+                let raw = predict_trajectory(current_pos, current_vel, EARTH_MU, 15000.0, 800, app.earth.get_radius());
                 predicted_path = raw.iter().map(|&p| to_mvec3(p)).collect();
             } else {
                 predicted_path.clear();
@@ -186,6 +202,102 @@ async fn viz_main(args: CliArgs) {
             if tel.orbit.is_bound { GREEN } else { YELLOW },
         );
 
+        // ---- 任务导航：计算当前阶段 & 任务进度 ----
+        let mc = &app.mission_control;
+        let tel = &mc.telemetry;
+
+        // 阶段索引：Artemis II 全任务 10 个阶段
+        let phase_idx: Option<usize> = {
+            let p = mc.current_phase;
+            use deepspace::simulation::MissionPhase::*;
+            let early = match p {
+                PreLaunch => Some(0),
+                Launch => Some(1),
+                Ascent | MaxQ => Some(2),
+                _ => None,
+            };
+            early.or_else(|| {
+                if app.mission_complete {
+                    // 任务结束映射到 SUCCESS（索引 9）
+                    return Some(9);
+                }
+                let apo = tel.orbit.apoapsis_m;
+                let alt = tel.altitude_m;
+                if apo > 400_000_000.0 {
+                    // 跨月轨道
+                    if app.simulation_time > 350_000.0 {
+                        // 回程
+                        if alt < 200_000.0 { Some(8) }    // REENTRY
+                        else { Some(7) }                    // RETURN
+                    } else if app.simulation_time > 150_000.0 {
+                        Some(6)                              // LUNAR_FLYBY
+                    } else if mc.coasting && mc.icps_ignited {
+                        Some(5)                              // TRANSLUNAR
+                    } else {
+                        Some(4)                              // TLI
+                    }
+                } else if tel.orbit.is_bound {
+                    let in_tli_burn = mc.icps_ignited && !mc.coasting && app.simulation_time > 6000.0;
+                    if in_tli_burn { Some(4) }              // TLI
+                    else { Some(3) }                         // ORBIT
+                } else {
+                    Some(3)                                  // ORBIT (suborbital but above ascent)
+                }
+            })
+        };
+
+        // 任务里程碑进度（12 步）
+        let mut tasks_done: usize = 0;
+        let task_highlight: Option<usize> = {
+            let alt = tel.altitude_m;
+            let apo = tel.orbit.apoapsis_m;
+            let bound = tel.orbit.is_bound;
+            let stage = app.vessel.current_stage;
+
+            // 逐级判断已完成任务
+            // 1. Liftoff
+            if mc.mission_time > 1.0 { tasks_done = 1; }
+            // 2. SRB Separation — stage moved past SRB stage (stage >= 2)
+            if stage >= 2 { tasks_done = tasks_done.max(2); }
+            // 3. MaxQ
+            if mc.max_q_passed || alt > 50_000.0 { tasks_done = tasks_done.max(3); }
+            // 4. MECO / Staging — cutoff_fired or stage >= 3
+            if mc.cutoff_fired || stage >= 3 { tasks_done = tasks_done.max(4); }
+            // 5. ICPS Circularization — icps_ignited && in orbit
+            if mc.icps_ignited && bound { tasks_done = tasks_done.max(5); }
+            // 6. TLI Burn — apoapsis > 400,000 km
+            if apo > 400_000_000.0 { tasks_done = tasks_done.max(6); }
+            // 7. Orion Separation — time-based heuristic after TLI
+            if apo > 400_000_000.0 && app.simulation_time > 30_000.0 { tasks_done = tasks_done.max(7); }
+            // 8. Lunar Flyby — time-based
+            if app.simulation_time > 200_000.0 { tasks_done = tasks_done.max(8); }
+            // 9. Return Cruise
+            if app.simulation_time > 500_000.0 { tasks_done = tasks_done.max(9); }
+            // 10. SM Separation — altitude dropping below 200km on return
+            if app.simulation_time > 800_000.0 && alt < 200_000.0 { tasks_done = tasks_done.max(10); }
+            // 11. Reentry
+            if alt < 100_000.0 && app.simulation_time > 850_000.0 { tasks_done = tasks_done.max(11); }
+            // 12. Splashdown / Landing
+            if app.mission_complete && mc.outcome == deepspace::simulation::MissionOutcome::Success {
+                tasks_done = tasks_done.max(12);
+            }
+
+            // 当前高亮任务：第一个未完成的
+            if tasks_done < 12 { Some(tasks_done) } else { None }
+        };
+
+        let mission_state = MissionDisplayState {
+            phase_idx,
+            tasks_done,
+            task_highlight,
+            complete: app.mission_complete,
+            outcome: mc.outcome.to_str().to_string(),
+        };
+
+        // 右侧导航面板
+        draw_phase_panel(&mission_state, screen_width() - 140.0, 20.0);
+        draw_task_panel(&mission_state, screen_width() - 140.0, 220.0);
+
         let warp_color = if time_warp < -0.01 {
             Color::new(1.0, 0.2, 0.2, 1.0)       // 红色 = 倒放
         } else if time_warp > 1.0 {
@@ -195,8 +307,15 @@ async fn viz_main(args: CliArgs) {
         } else {
             LIGHTGRAY                              // 灰色 = 1:1
         };
+        let warp_label = if time_warp.abs() < 0.1 {
+            format!("Time warp: {:.4}x", time_warp)
+        } else if time_warp.abs() < 10.0 {
+            format!("Time warp: {:.3}x", time_warp)
+        } else {
+            format!("Time warp: {:.1}x", time_warp)
+        };
         draw_text(
-            &format!("Time warp: {:.1}x", time_warp),
+            &warp_label,
             screen_width() / 2.0 - 60.0,
             24.0,
             18.0,
