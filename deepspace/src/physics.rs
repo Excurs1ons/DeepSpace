@@ -48,7 +48,7 @@ impl PhysicsBody {
     }
 
     pub fn update(&mut self, dt: f64) {
-        if self.mass <= 0.0 || dt <= 0.0 {
+        if self.mass <= 0.0 || dt == 0.0 {
             return;
         }
         let accel = self.accumulated_force / self.mass;

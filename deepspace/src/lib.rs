@@ -3,9 +3,8 @@ pub mod core;
 pub mod environment;
 pub mod physics;
 pub mod guidance;
-pub mod mission;
+pub mod simulation;
 pub mod vessel;
-pub mod app;
 pub mod scene;
 pub mod space_physics;
 

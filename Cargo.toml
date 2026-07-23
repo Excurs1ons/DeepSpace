@@ -1,22 +1,6 @@
-[package]
-name = "deepspace"
-version = "0.2.0"
-edition = "2021"
-description = "DeepSpace — 全面 Rust 重写的航天模拟"
-license = "MIT"
-default-run = "rocket-sim"
-
-# 零外部依赖：纯标准库实现（Mock-first 理念）
-[dependencies]
-
-# 二进制目标
-[[bin]]
-name = "rocket-sim"
-path = "src/bin/rocket-sim.rs"
-
-[[bin]]
-name = "nbody-sim"
-path = "src/bin/nbody-sim.rs"
+[workspace]
+members = ["deepspace", "demo"]
+resolver = "2"
 
 [profile.release]
 opt-level = 3

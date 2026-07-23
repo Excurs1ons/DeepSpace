@@ -9,11 +9,11 @@
 use std::fs::File;
 use std::io::{Write, BufWriter};
 
-use crate::environment::{Atmosphere, Planet, ThermalSimulation};
-use crate::guidance::{FlightComputer, GuidanceState};
-use crate::mission::{MissionConfig, MissionControl, MissionOutcome, MissionScript, TelemetryData};
+use deepspace::environment::{Atmosphere, Planet, ThermalSimulation};
+use deepspace::guidance::{FlightComputer, GuidanceState};
+use deepspace::simulation::{MissionConfig, MissionControl, MissionOutcome, MissionScript, TelemetryData};
 
-use crate::vessel::{Part, PropellantType, Vessel};
+use deepspace::vessel::{Part, PropellantType, Vessel};
 
 // =====================================================================
 // CLI 参数解析
@@ -134,9 +134,9 @@ fn write_telemetry_csv(path: &str, log: &[TelemetryData]) -> Result<(), String> 
 // 飞船构建器
 
 fn build_vessel_from_config(config: &MissionConfig, vessel: &mut Vessel) {
-    vessel.body = crate::physics::PhysicsBody::new(
-        crate::Vec3::new(0.0, 6_371_000.0, 0.0),
-        crate::Vec3::zero(),
+    vessel.body = deepspace::physics::PhysicsBody::new(
+        deepspace::Vec3::new(0.0, 6_371_000.0, 0.0),
+        deepspace::Vec3::zero(),
         0.0,
         12_000_000.0,
     );
@@ -322,17 +322,17 @@ impl SimulationApp {
                     target_ap_km: 185.0,
                     target_pe_km: 180.0,
                     max_duration_s: 7200.0,
-                    rs25: crate::mission::EngineConfig { engine_count: 4, thrust_sea_level_n: 1_860_000.0, sea_level_isp_s: 366.0, vacuum_isp_s: 452.0, of_ratio: 6.0, ..Default::default() },
-                    srb: crate::mission::EngineConfig { engine_count: 2, thrust_sea_level_n: 14_000_000.0, sea_level_isp_s: 242.0, vacuum_isp_s: 269.0, of_ratio: 1.0, ..Default::default() },
-                    rl10: crate::mission::EngineConfig { thrust_n: 101_400.0, sea_level_isp_s: 200.0, vacuum_isp_s: 462.0, of_ratio: 5.88, ..Default::default() },
-                    aj10: crate::mission::EngineConfig { thrust_n: 27_800.0, sea_level_isp_s: 240.0, vacuum_isp_s: 316.0, ..Default::default() },
-                    core_lh2: crate::mission::TankConfig { dry_mass_kg: 25000.0, fuel_mass_kg: 120_000.0, propellant: "LH2".into(), ..Default::default() },
-                    core_lox: crate::mission::TankConfig { dry_mass_kg: 15000.0, fuel_mass_kg: 720_000.0, propellant: "LOX".into(), ..Default::default() },
-                    srb_fuel: crate::mission::TankConfig { dry_mass_kg: 1000.0, fuel_mass_kg: 628_000.0, propellant: "Solid".into(), ..Default::default() },
-                    icps_lh2: crate::mission::TankConfig { dry_mass_kg: 3500.0, fuel_mass_kg: 27_000.0, propellant: "LH2".into(), ..Default::default() },
-                    icps_lox: crate::mission::TankConfig { dry_mass_kg: 2000.0, fuel_mass_kg: 8_000.0, propellant: "LOX".into(), ..Default::default() },
-                    orion_mmh: crate::mission::TankConfig { dry_mass_kg: 800.0, fuel_mass_kg: 5_000.0, propellant: "MMH".into(), ..Default::default() },
-                    orion_nto: crate::mission::TankConfig { dry_mass_kg: 500.0, fuel_mass_kg: 3_000.0, propellant: "NTO".into(), ..Default::default() },
+                    rs25: deepspace::simulation::EngineConfig { engine_count: 4, thrust_sea_level_n: 1_860_000.0, sea_level_isp_s: 366.0, vacuum_isp_s: 452.0, of_ratio: 6.0, ..Default::default() },
+                    srb: deepspace::simulation::EngineConfig { engine_count: 2, thrust_sea_level_n: 14_000_000.0, sea_level_isp_s: 242.0, vacuum_isp_s: 269.0, of_ratio: 1.0, ..Default::default() },
+                    rl10: deepspace::simulation::EngineConfig { thrust_n: 101_400.0, sea_level_isp_s: 200.0, vacuum_isp_s: 462.0, of_ratio: 5.88, ..Default::default() },
+                    aj10: deepspace::simulation::EngineConfig { thrust_n: 27_800.0, sea_level_isp_s: 240.0, vacuum_isp_s: 316.0, ..Default::default() },
+                    core_lh2: deepspace::simulation::TankConfig { dry_mass_kg: 25000.0, fuel_mass_kg: 120_000.0, propellant: "LH2".into(), ..Default::default() },
+                    core_lox: deepspace::simulation::TankConfig { dry_mass_kg: 15000.0, fuel_mass_kg: 720_000.0, propellant: "LOX".into(), ..Default::default() },
+                    srb_fuel: deepspace::simulation::TankConfig { dry_mass_kg: 1000.0, fuel_mass_kg: 628_000.0, propellant: "Solid".into(), ..Default::default() },
+                    icps_lh2: deepspace::simulation::TankConfig { dry_mass_kg: 3500.0, fuel_mass_kg: 27_000.0, propellant: "LH2".into(), ..Default::default() },
+                    icps_lox: deepspace::simulation::TankConfig { dry_mass_kg: 2000.0, fuel_mass_kg: 8_000.0, propellant: "LOX".into(), ..Default::default() },
+                    orion_mmh: deepspace::simulation::TankConfig { dry_mass_kg: 800.0, fuel_mass_kg: 5_000.0, propellant: "MMH".into(), ..Default::default() },
+                    orion_nto: deepspace::simulation::TankConfig { dry_mass_kg: 500.0, fuel_mass_kg: 3_000.0, propellant: "NTO".into(), ..Default::default() },
                     ..Default::default()
                 })
             }
@@ -353,9 +353,13 @@ impl SimulationApp {
         // 初始化 MissionControl
         let mut mission_control = MissionControl::new();
         mission_control.load_mission(&MissionScript::default());
+        // 从配置文件同步到任务脚本
+        mission_control.script.max_duration_s = config.max_duration_s;
+        mission_control.script.target_orbit.apoapsis_km = config.target_ap_km;
+        mission_control.script.target_orbit.periapsis_km = config.target_pe_km;
 
         // 初始化飞控计算机
-        let mut gc = crate::guidance::GuidanceConfig::default();
+        let mut gc = deepspace::guidance::GuidanceConfig::default();
         gc.algorithm = config.guidance.algorithm.clone();
         gc.pitch_start_alt_m = config.guidance.pitch_start_alt_m;
         gc.pitch_end_alt_m = config.guidance.pitch_end_alt_m;
@@ -381,10 +385,10 @@ impl SimulationApp {
         }
     }
 
-    /// 主仿真步进
+    /// 主仿真步进（支持倒放：dt 可为负）
     pub fn step(&mut self, dt: f64) {
         if self.mission_complete { return; }
-        if dt <= 0.0 { return; }
+        if dt == 0.0 { return; }
 
         // 重力
         let gravity = self.earth.get_gravity_at(*self.vessel.body.get_position());
@@ -456,7 +460,7 @@ impl SimulationApp {
         if altitude < 0.0 {
             let ground_pos = pos.normalized() * self.earth.get_radius();
             self.vessel.body.set_position(ground_pos);
-            self.vessel.body.set_velocity(crate::Vec3::zero());
+            self.vessel.body.set_velocity(deepspace::Vec3::zero());
         }
 
         // 收集遥测（每 2 秒约 20 步，每 20 步录一次）

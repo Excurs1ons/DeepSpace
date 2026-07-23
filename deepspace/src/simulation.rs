@@ -902,7 +902,7 @@ impl MissionControl {
 
     pub fn update(&mut self, dt: f64, engine_status: &EngineStatus, vessel: &mut Vessel, earth: &Planet) {
         if self.outcome != MissionOutcome::InProgress { return; }
-        if dt <= 0.0 { return; }
+        if dt == 0.0 { return; }
 
         self.mission_time += dt;
         self.last_engine_status = engine_status.clone();
@@ -1103,8 +1103,16 @@ impl MissionControl {
 
         let pos = vessel.body.get_position();
         if earth.get_altitude(*pos) < 0.0 && self.mission_time > 10.0 {
-            self.outcome = MissionOutcome::Failure;
-            self.trigger_event("Crash", "Vehicle impacted surface");
+            let speed = vessel.body.get_velocity().length();
+            if speed < 10.0 {
+                // 软着陆/溅落 → 成功
+                self.outcome = MissionOutcome::Success;
+                self.trigger_event("Landing", &format!("Soft landing/splashdown at T+{:.1}s, speed={:.1}m/s", self.mission_time, speed));
+            } else {
+                // 硬撞击 → 坠毁
+                self.outcome = MissionOutcome::Failure;
+                self.trigger_event("Crash", &format!("Vehicle impacted surface at T+{:.1}s, speed={:.1}m/s", self.mission_time, speed));
+            }
             self.finalize_summary();
             return;
         }

@@ -171,14 +171,26 @@ pub struct FuelTankPart {
 }
 
 impl FuelTankPart {
+    /// 消耗或加注燃料
+    ///
+    /// - `amount > 0` — 正向消耗（返回 false 表示燃料不足，设为 0）
+    /// - `amount < 0` — 逆向加注（不超过容量，始终返回 true）
+    /// - `amount == 0` — 无操作，返回 true
     pub fn consume_fuel(&mut self, amount: f64) -> bool {
-        if amount <= 0.0 { return false; }
-        if self.current_fuel >= amount {
-            self.current_fuel -= amount;
+        if amount > 0.0 {
+            if self.current_fuel >= amount {
+                self.current_fuel -= amount;
+                true
+            } else {
+                self.current_fuel = 0.0;
+                false
+            }
+        } else if amount < 0.0 {
+            // 逆向倒带：加注燃料
+            self.current_fuel = (self.current_fuel - amount).min(self.capacity);
             true
         } else {
-            self.current_fuel = 0.0;
-            false
+            true
         }
     }
 }
@@ -449,41 +461,54 @@ impl Vessel {
     /// 更新一个时间步，返回发动机状态
     pub fn update(&mut self, dt: f64, ambient_pressure: f64) -> EngineStatus {
         let mut status = EngineStatus::default();
-        if dt <= 0.0 { return status; }
+        if dt == 0.0 { return status; }
 
-        // 推进剂消耗
+        // 推进剂消耗（支持倒放：dt < 0 时逆向加注，发动机可恢复激活）
         for i in 0..self.parts.len() {
-            let engine_idx = if let PartKind::Engine(e) = &self.parts[i].kind {
-                if self.parts[i].is_active() && e.throttle > 0.0 { Some(i) } else { None }
-            } else { None };
+            // dt > 0: 只处理已激活且有油门的发动机
+            // dt < 0: 处理有油门的发动机（即使已熄火也要逆向加注）
+            let process = match &self.parts[i].kind {
+                PartKind::Engine(e) => {
+                    if dt > 0.0 { self.parts[i].is_active() && e.throttle > 0.0 }
+                    else { e.throttle > 0.0 }
+                }
+                _ => false,
+            };
+            if !process { continue; }
 
-            if let Some(ei) = engine_idx {
-                let engine = match &self.parts[ei].kind {
-                    PartKind::Engine(e) => e.clone(),
-                    _ => unreachable!(),
-                };
-                let mdot = engine.current_mass_flow_rate();
-                let fuel_to_consume = mdot * engine.fuel_mass_fraction() * dt;
-                let ox_to_consume = mdot * engine.ox_mass_fraction() * dt;
+            // 倒放时把熄火状态一并撤销
+            if dt < 0.0 && !self.parts[i].active {
+                self.parts[i].active = true;
+            }
 
-                let mut fuel_ok = true;
-                let mut ox_ok = true;
+            let engine = match &self.parts[i].kind {
+                PartKind::Engine(e) => e.clone(),
+                _ => continue,
+            };
+            let ei = i;
 
-                for j in 0..self.parts.len() {
-                    if self.parts[j].stage != self.parts[ei].stage || self.parts[j].decoupled { continue; }
-                    if let PartKind::FuelTank(ref mut tank) = self.parts[j].kind {
-                        if tank.propellant == engine.fuel_type && fuel_to_consume > 0.0 {
-                            if !tank.consume_fuel(fuel_to_consume) { fuel_ok = false; }
-                        }
-                        if tank.propellant == engine.ox_type && ox_to_consume > 0.0 {
-                            if !tank.consume_fuel(ox_to_consume) { ox_ok = false; }
-                        }
+            let mdot = engine.current_mass_flow_rate();
+            let fuel_to_consume = mdot * engine.fuel_mass_fraction() * dt;
+            let ox_to_consume = mdot * engine.ox_mass_fraction() * dt;
+
+            let mut fuel_ok = true;
+            let mut ox_ok = true;
+
+            for j in 0..self.parts.len() {
+                if self.parts[j].stage != self.parts[ei].stage || self.parts[j].decoupled { continue; }
+                if let PartKind::FuelTank(ref mut tank) = self.parts[j].kind {
+                    if tank.propellant == engine.fuel_type {
+                        if !tank.consume_fuel(fuel_to_consume) { fuel_ok = false; }
+                    }
+                    if tank.propellant == engine.ox_type {
+                        if !tank.consume_fuel(ox_to_consume) { ox_ok = false; }
                     }
                 }
+            }
 
-                if !fuel_ok || !ox_ok {
-                    self.parts[ei].active = false;
-                }
+            // 仅在正向推进时因燃料耗尽熄火；倒放时不熄火
+            if (!fuel_ok || !ox_ok) && dt > 0.0 {
+                self.parts[ei].active = false;
             }
         }
 
@@ -997,10 +1022,24 @@ mod tests {
 
     #[test]
     fn test_fuel_tank_edge_cases() {
+        // empty tank with capacity 0
         let mut tank = Part::new_fuel_tank("Empty", 10.0, 0.0, PropellantType::Lox);
         assert!((tank.get_mass() - 10.0).abs() < 1e-9);
         let t = tank.as_tank_mut().unwrap();
-        assert!(!t.consume_fuel(1.0)); // can't consume from empty
-        assert!(!t.consume_fuel(-5.0)); // negative amount
+        assert!(!t.consume_fuel(1.0)); // can't consume from empty (capacity 0)
+        assert!(t.consume_fuel(-5.0)); // reverse: add fuel back (capacity 0 → stays 0)
+        assert!((t.current_fuel - 0.0).abs() < 1e-9);
+        assert!(t.consume_fuel(0.0)); // zero is no-op
+
+        // tank starts full (current_fuel == capacity)
+        let mut tank2 = Part::new_fuel_tank("Tank", 50.0, 100.0, PropellantType::Lox);
+        let t2 = tank2.as_tank_mut().unwrap();
+        assert!((t2.current_fuel - 100.0).abs() < 1e-9); // starts full
+        assert!(t2.consume_fuel(30.0)); // consume 30
+        assert!((t2.current_fuel - 70.0).abs() < 1e-9);
+        assert!(t2.consume_fuel(-20.0)); // reverse: add 20 back
+        assert!((t2.current_fuel - 90.0).abs() < 1e-9);
+        assert!(t2.consume_fuel(-999.0)); // cap at capacity
+        assert!((t2.current_fuel - t2.capacity).abs() < 1e-9);
     }
 }

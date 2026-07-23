@@ -1,0 +1,21 @@
+[package]
+name = "deepspace-demo"
+version = "0.2.0"
+edition = "2021"
+description = "DeepSpace Demo — 太空物理引擎演示与可视化"
+
+[lib]
+name = "demo"
+path = "src/lib.rs"
+
+[dependencies]
+deepspace = { path = "../deepspace" }
+macroquad = "0.4"
+
+[[bin]]
+name = "rocket-sim"
+path = "src/bin/rocket-sim.rs"
+
+[[bin]]
+name = "nbody-sim"
+path = "src/bin/nbody-sim.rs"
