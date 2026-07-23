@@ -2,8 +2,9 @@
 name = "deepspace"
 version = "0.2.0"
 edition = "2021"
-description = "DeepSpace — 全面 Rust 重写的航天模拟 (原 C++ src/ 作参考)"
+description = "DeepSpace — 全面 Rust 重写的航天模拟"
 license = "MIT"
+default-run = "rocket-sim"
 
 # 零外部依赖：纯标准库实现（Mock-first 理念）
 [dependencies]
