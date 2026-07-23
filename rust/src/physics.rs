@@ -804,11 +804,11 @@ impl GravitationalSystem {
 
     /// 总角动量
     pub fn total_angular_momentum(&self) -> Vec3 {
-        let mut L = Vec3::zero();
+        let mut ang = Vec3::zero();
         for b in &self.bodies {
-            L = L + b.position.cross(&b.velocity) * b.mass;
+            ang = ang + b.position.cross(&b.velocity) * b.mass;
         }
-        L
+        ang
     }
 
     /// 所有体之间的最近距离

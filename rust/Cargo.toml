@@ -17,6 +17,3 @@ path = "src/bin/rocket-sim.rs"
 [[bin]]
 name = "nbody-sim"
 path = "src/bin/nbody-sim.rs"
-
-[profile.release]
-opt-level = 3
