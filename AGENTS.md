@@ -1,97 +1,83 @@
 # Repository Guidelines
 
 ## 项目定位
-`DeepSpace` 是基于 Mock 引擎接口的 C++20 航天模拟项目，当前主线是 `Artemis II` 任务模板与高拟真推进系统（双组元、分级、轨道机动、事件驱动遥测）。最终将迁移到真实 PrismaEngine SDK。深空算法层（Lambert/积分器/任务链）为独立纯函数模块，可经 FFI/独立验证供引擎调用。
+`DeepSpace` — Rust 航天模拟引擎与宇宙沙盘。核心引擎在 `rust/` 目录下，
+提供 N 体引力辛积分器（Leapfrog/Yoshida4）、场景化沙箱仿真、轨道力学等。
+支持热切换场景文件，适合数亿年尺度的混沌三体模拟。
 
-## 项目结构与模块组织
-- `src/main.cpp`：程序入口（Mock驱动）。
-- `src/DeepSpaceApp.h`：`SimulationLayer`、任务事件机、自动驾驶、遥测。
-- `src/core/`：基础数学与常量。
-- `src/physics/`：动力学积分、空气动力学、轨道要素与轨道预判。
-- `src/environment/`：行星与大气模型。
-- `src/vessel/`：部件、分级、RCS、推进剂路由、节流控制。
-- `src/mission/`：任务模板与飞行计划（Artemis II 等）。
-- `src/engine/`：**Mock引擎接口层**（`MockEngine.h/.cpp`；`engine/ui/MockUI.h/.cpp`，待替换为真实SDK）。
-- `DESIGN.md`、`DEVELOPMENT.md`：设计路线与技术积累。
+## 构建与运行
 
-## 开发策略：Mock-First 引擎接口
-
-### 核心原则
-1. **Mock优先**：所有引擎接口先用Mock实现，确保功能完整后再切换真实SDK
-2. **逆推引擎需求**：通过Mock接口的使用方式，反推PrismaEngine需要提供的底层接口
-3. **无平台依赖**：Mock实现在任何平台都能编译运行，无需SDL3/OpenGL等依赖
-
-### Mock引擎接口清单
-```
-src/engine/
-├── MockEngine.h          # Mock引擎主类（接口声明）
-├── MockEngine.cpp        # Mock引擎实现
-└── ui/
-    ├── MockUI.h          # Mock UI/HUD 接口
-    └── MockUI.cpp        # Mock UI/HUD 实现
-```
-
-### 切换时机
-- 项目核心功能完成（发射→入轨→任务事件）
-- Mock接口覆盖所有使用场景
-- 通过Mock使用方式编写`ENGINE_REQUIREMENTS.md`
-
-## 构建、测试与开发命令
 ```bash
-# Mock模式（默认，无需依赖）
-cmake -S . -B build -G Ninja
-cmake --build build -j
-./build/DeepSpace
+cd rust
 
-# 真实SDK模式（可选）
-cmake -S . -B build -G Ninja -DUSE_MOCK_ENGINE=OFF
-cmake --build build -j
-./build/DeepSpace
+# 全量测试
+cargo test --lib
+
+# 火箭任务模拟
+cargo run --bin rocket-sim -- --headless
+
+# N体宇宙沙盘
+cargo run --bin nbody-sim -- --scene ../scenes/three_body.scene --csv output.csv
+
+# 场景热切换（运行时写入切换文件）
+echo "/path/to/new_scene.scene" > /tmp/switch
+cargo run --bin nbody-sim -- --scene scenes/solar_system.scene --switch-file /tmp/switch
 ```
 
-## 并行开发规范
+## 二进制目标
 
-### 关联性判断标准
-| 关联等级 | 定义 | 并行可行性 |
-|---------|------|-----------|
-| **高关联** | 修改同一文件、同一模块、共享数据结构 | ❌ 禁止并行 |
-| **中关联** | 不同文件但同一模块、有接口依赖 | ⚠️ 需协商接口 |
-| **低关联** | 不同模块、无共享状态 | ✅ 可并行 |
+| Target | 命令 | 用途 |
+|--------|------|------|
+| `rocket-sim` | `cargo run --bin rocket-sim` | 火箭任务模拟（SLS Block 1 / Artemis II） |
+| `nbody-sim` | `cargo run --bin nbody-sim` | N体宇宙沙盘模拟器 |
 
-### 并行开发许可
-- ✅ `physics/` 与 `vessel/` 可并行（独立物理域）
-- ✅ `mission/` 与 `environment/` 可并行（无共享）
-- ❌ `engine/ui/` 与 `DeepSpaceApp.h` 不可并行（共享SimulationLayer）
-- ❌ `engine/` 与 `DeepSpaceApp.h` 不可并行（接口依赖）
+## 场景文件
 
-### 冲突解决
-1. 每个代理开发独立功能模块
-2. 接口类定义需先于实现（接口先行原则）
-3. 共享数据结构放在 `src/core/`
+场景描述文件 (`.scene`) 位于 `scenes/` 目录：
+- `solar_system.scene` — 太阳 + 水金地火
+- `three_body.scene` — 恒星 + 2 行星（层次三体）
+- `figure8.scene` — Chenciner-Montgomery 图-8 三体稳定轨道
 
-## 代码风格与命名规范
-- C++20 + 4 空格缩进。
-- 类型/类/方法 `PascalCase`，成员变量 `m_` 前缀。
-- 物理计算统一 `double` 与 `Vec3d`。
-- 推进系统必须显式声明推进剂类型与 O/F 质量比，禁止使用“单油箱总量”近似。
-- 任务逻辑集中在独立函数（如 `BuildArtemis2FlightPlan`、`ManageMissionEvents`），避免把流程散落在 `OnUpdate`。
+## 场景文件格式
+
+```ini
+[scene]
+name = My Scene
+dt = 1000.0
+integrator = symplectic4    # 或 leapfrog
+duration = 3.15576e9
+adaptive = true
+softening = 1e6
+
+[body.Star]
+mass = 1.989e30; radius = 6.96e8
+pos.x = 0; pos.y = 0; pos.z = 0
+vel.x = 0; vel.y = 0; vel.z = 0
+
+[body.Planet]
+mass = 5.972e24; radius = 6.371e6
+pos.x = 1.496e11; pos.y = 0; pos.z = 0
+vel.x = 0; vel.y = 29780; vel.z = 0
+```
+
+## 代码风格与规范
+- Rust 2021 edition, 4空格缩进。
+- 物理计算统一 `f64` 与 `Vec3`。
+- 辛积分器在 `physics.rs` 的 `GravitationalSystem` 中实现。
+- 场景配置解析在 `scene.rs` 的 `SceneConfig` / `SceneRuntime` 中。
 
 ## 测试规范
-测试位于 `tests/core_tests.h`（零依赖 mini-harness）。语法校验：
 ```bash
-g++ -std=c++20 -fsyntax-only -Isrc tests/core_tests.h
+cargo test --lib    # 全部测试（153+）
+cargo test --lib physics  # 物理引擎测试（33）
+cargo test --lib scene    # 场景系统测试（13）
 ```
-至少完成：
-- 全量构建通过。
-- Artemis II 烟测：起飞、Max-Q 节流、主级分离、ICPS 圆轨、Orion 接管。
-- 检查遥测：`Ap/Pe`、`q`、`Thrust`、`mdot`、`fuel/ox` 流量、阶段剩余推进剂。
 
-## 提交与 Pull Request 规范
-推荐 `type: summary`：`feat:`、`fix:`、`refactor:`、`docs:`、`build:`。
-- 每次提交只包含一类逻辑改动。
-- PR 必须写明：变更范围、验证方式、关键遥测证据（日志/截图）。
-- 涉及飞行计划、推进剂模型、物理参数时，必须同步更新 `DESIGN.md` 与 `DEVELOPMENT.md`。
+## 提交规范
+推荐 `type(scope): summary`：`feat:`、`fix:`、`refactor:`、`docs:`。
+涉及物理参数/轨道要素变更时，保持测试覆盖。
 
 ## 配置与仓库卫生
-- 不提交构建产物与下载依赖：`build/`、`PrismaEngine-SDK/`、`*.tar.gz`、`*.so`。
-- 新增任务模板时，复用 `PartLibrary` 工厂函数，不在更新循环里动态创建部件。
+- 不提交构建产物：`target/`、`*.csv`。
+- 场景文件放 `scenes/`，不被编译。
+- 此 `AGENTS.md` 为 AI 辅助开发指南，与 `rust/AGENTS.md` 互补。

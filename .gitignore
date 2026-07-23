@@ -1,8 +1,11 @@
-build/
-logs/
-release/
-PrismaEngine-SDK/
-PrismaEngine/
-*.tar.gz
-*.so
-.vscode/
+# Rust build artifacts
+target/
+*.csv
+*.profraw
+
+# Test artifacts
+test_scene_*
+
+# OS files
+.DS_Store
+Thumbs.db
