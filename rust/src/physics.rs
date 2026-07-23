@@ -552,7 +552,299 @@ impl ArtificialGravity {
     }
 }
 
-#[cfg(test)]
+// =====================================================================
+// 引力 N 体系统 — 辛积分器支持数十亿年稳定积分
+// =====================================================================
+
+/// 引力体（行星/恒星/任意质点）
+#[derive(Debug, Clone)]
+pub struct GravBody {
+    pub name: String,
+    pub mass: f64,
+    pub radius: f64,
+    pub position: Vec3,
+    pub velocity: Vec3,
+}
+
+impl GravBody {
+    pub fn new(name: &str, mass: f64, radius: f64, pos: Vec3, vel: Vec3) -> Self {
+        GravBody {
+            name: name.to_string(),
+            mass,
+            radius,
+            position: pos,
+            velocity: vel,
+        }
+    }
+}
+
+/// N 体引力系统 — 支持任意数量天体相互引力作用
+///
+/// 积分器:
+/// - `step_leapfrog()` — 2 阶辛 (Verlet), 最快, 长期稳定
+/// - `step_symplectic4()` — 4 阶辛 (Yoshida 1990), 更高精度
+/// - `step_adaptive()` — 根据最近距离自动调整步长
+///
+/// 对于「快进数亿年三体运动」场景, 推荐 `step_symplectic4()` 配合
+/// `step_adaptive()` 的自动步长调节。
+#[derive(Debug, Clone)]
+pub struct GravitationalSystem {
+    pub bodies: Vec<GravBody>,
+    pub time: f64,
+    softening_squared: f64,
+}
+
+impl GravitationalSystem {
+    /// 创建空系统, `softening` 为引力软化长度 (避免碰撞奇点)
+    pub fn new(softening: f64) -> Self {
+        GravitationalSystem {
+            bodies: Vec::new(),
+            time: 0.0,
+            softening_squared: (softening.max(1e-20)).powi(2),
+        }
+    }
+
+    pub fn add_body(&mut self, body: GravBody) {
+        self.bodies.push(body);
+    }
+
+    /// 体 i 受到所有其他体的引力加速度 (带软化)
+    pub fn acceleration(&self, i: usize) -> Vec3 {
+        let mut acc = Vec3::zero();
+        let n = self.bodies.len();
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            let dr = self.bodies[j].position - self.bodies[i].position;
+            let r2 = dr.length_squared() + self.softening_squared;
+            let inv_r3 = 1.0 / (r2 * r2.sqrt());
+            acc = acc + dr * (crate::G * self.bodies[j].mass * inv_r3);
+        }
+        acc
+    }
+
+    /// 所有体的加速度向量
+    fn accelerations(&self) -> Vec<Vec3> {
+        (0..self.bodies.len()).map(|i| self.acceleration(i)).collect()
+    }
+
+    // ----------------------------------------------------------------
+    // 辛积分器
+    // ----------------------------------------------------------------
+
+    /// Leapfrog / Velocity Verlet — 2 阶辛
+    ///
+    /// 公式:
+    ///   v_{n+½} = v_n + ½·a(q_n)·dt
+    ///   q_{n+1} = q_n + v_{n+½}·dt
+    ///   v_{n+1} = v_{n+½} + ½·a(q_{n+1})·dt
+    pub fn step_leapfrog(&mut self, dt: f64) {
+        let n = self.bodies.len();
+        if n == 0 || dt <= 0.0 {
+            return;
+        }
+
+        // ½-kick: v += ½·a·dt
+        let a = self.accelerations();
+        for (i, body) in self.bodies.iter_mut().enumerate() {
+            body.velocity = body.velocity + a[i] * (0.5 * dt);
+        }
+
+        // drift: q += v·dt
+        for body in &mut self.bodies {
+            body.position = body.position + body.velocity * dt;
+        }
+
+        // ½-kick: v += ½·a(q_new)·dt
+        let a_new = self.accelerations();
+        for (i, body) in self.bodies.iter_mut().enumerate() {
+            body.velocity = body.velocity + a_new[i] * (0.5 * dt);
+        }
+
+        self.time += dt;
+    }
+
+    /// 4 阶辛 (Yoshida 1990 / Forest-Ruth)
+    ///
+    /// 组合 3 个 leapfrog 步, 系数:
+    ///   w₁ = 1/(2 - ∛2)  ≈ 1.3512071919596578
+    ///   w₀ = -∛2/(2-∛2) ≈ -0.7024143839193153
+    ///
+    /// w₁ > 1 且 w₀ < 0, 但整体 4 阶精度且辛 (能量守恒)。
+    /// 比 leapfrog 慢约 3×, 但精度高 2 个数量级。
+    pub fn step_symplectic4(&mut self, dt: f64) {
+        let n = self.bodies.len();
+        if n == 0 || dt <= 0.0 {
+            return;
+        }
+
+        // Yoshida 系数
+        let w1 = 1.0 / (2.0 - 2.0_f64.powf(1.0 / 3.0));
+        let w0 = 1.0 - 2.0 * w1; // = -2^(1/3)/(2-2^(1/3))
+
+        let stages = [w1, w0, w1];
+
+        for &stage in &stages {
+            // ½-drift: q += v · (stage·dt/2)
+            for body in &mut self.bodies {
+                body.position = body.position + body.velocity * (stage * dt * 0.5);
+            }
+
+            // kick: v += a(q) · stage·dt
+            let a = self.accelerations();
+            for (i, body) in self.bodies.iter_mut().enumerate() {
+                body.velocity = body.velocity + a[i] * (stage * dt);
+            }
+
+            // ½-drift: q += v · (stage·dt/2)
+            for body in &mut self.bodies {
+                body.position = body.position + body.velocity * (stage * dt * 0.5);
+            }
+        }
+
+        self.time += dt;
+    }
+
+    /// 自适应步长积分 — 根据最近距离自动调整步长
+    ///
+    /// 当两个体接近时自动缩小步长, 确保力的分辨率足够。
+    /// `max_dt` 为最大许可步长, `min_dt` 为最小许可步长 (防止死循环)。
+    /// 返回实际使用的步长。
+    pub fn step_adaptive(&mut self, max_dt: f64, min_dt: f64) -> f64 {
+        let n = self.bodies.len();
+        if n < 2 || max_dt <= 0.0 {
+            return max_dt;
+        }
+
+        // 找最近距离和最大相对速度
+        let (min_dist, max_rel_speed) = {
+            let mut min_d = f64::MAX;
+            let mut max_v = 0.0;
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    let dr = self.bodies[j].position - self.bodies[i].position;
+                    let d = dr.length();
+                    let dv = self.bodies[j].velocity - self.bodies[i].velocity;
+                    let v = dv.length();
+                    if d > 0.0 && d < min_d {
+                        min_d = d;
+                    }
+                    if v > max_v {
+                        max_v = v;
+                    }
+                }
+            }
+            (min_d, max_v)
+        };
+
+        // 建议步长: 以 ~100 步跨越最近距离
+        let suggested = if max_rel_speed > 1e-30 && min_dist < f64::MAX / 2.0 {
+            0.01 * min_dist / max_rel_speed
+        } else {
+            max_dt
+        };
+
+        let dt = suggested.clamp(min_dt, max_dt);
+        self.step_symplectic4(dt);
+        dt
+    }
+
+    /// 运行仿真持续 `duration` 秒, 每步 `dt` 秒
+    pub fn run(&mut self, duration: f64, dt: f64, use_symplectic4: bool, adaptive: bool) {
+        let end = self.time + duration;
+        let min_dt = dt * 1e-6;
+        while self.time < end {
+            let remaining = end - self.time;
+            let step_dt = if adaptive {
+                self.step_adaptive(dt.min(remaining), min_dt)
+            } else if use_symplectic4 {
+                self.step_symplectic4(dt.min(remaining));
+                dt.min(remaining)
+            } else {
+                self.step_leapfrog(dt.min(remaining));
+                dt.min(remaining)
+            };
+            if step_dt <= 0.0 {
+                break;
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // 守恒量
+    // ----------------------------------------------------------------
+
+    /// 总动能
+    pub fn kinetic_energy(&self) -> f64 {
+        self.bodies
+            .iter()
+            .map(|b| 0.5 * b.mass * b.velocity.length_squared())
+            .sum()
+    }
+
+    /// 总势能
+    pub fn potential_energy(&self) -> f64 {
+        let mut pe = 0.0;
+        let n = self.bodies.len();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let dr = self.bodies[j].position - self.bodies[i].position;
+                let r = (dr.length_squared() + self.softening_squared).sqrt();
+                pe -= crate::G * self.bodies[i].mass * self.bodies[j].mass / r;
+            }
+        }
+        pe
+    }
+
+    /// 总机械能
+    pub fn total_energy(&self) -> f64 {
+        self.kinetic_energy() + self.potential_energy()
+    }
+
+    /// 总角动量
+    pub fn total_angular_momentum(&self) -> Vec3 {
+        let mut L = Vec3::zero();
+        for b in &self.bodies {
+            L = L + b.position.cross(&b.velocity) * b.mass;
+        }
+        L
+    }
+
+    /// 所有体之间的最近距离
+    pub fn min_distance(&self) -> f64 {
+        let n = self.bodies.len();
+        if n < 2 {
+            return f64::MAX;
+        }
+        let mut min_d = f64::MAX;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let dr = self.bodies[j].position - self.bodies[i].position;
+                let d = dr.length();
+                if d < min_d {
+                    min_d = d;
+                }
+            }
+        }
+        min_d
+    }
+
+    /// 是否有碰撞发生 (距离 < 两者半径之和)
+    pub fn has_collision(&self) -> bool {
+        let n = self.bodies.len();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let dr = self.bodies[j].position - self.bodies[i].position;
+                let d = dr.length();
+                if d < self.bodies[i].radius + self.bodies[j].radius {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}#[cfg(test)]
 mod tests {
     use super::*;
     use crate::environment::{Atmosphere, Planet};
@@ -769,5 +1061,296 @@ mod tests {
     fn test_gravity_g_conversion() {
         let g = ArtificialGravity::gravity_g(9.80665);
         assert!((g - 1.0).abs() < 1e-9);
+    }
+
+    // =============================================================
+    // GravitationalSystem — N 体 + 辛积分器测试
+    // =============================================================
+
+    fn simple_system() -> GravitationalSystem {
+        let mut sys = GravitationalSystem::new(1e-6);
+        sys.add_body(GravBody::new("Star", 1.989e30, 6.96e8,
+            Vec3::zero(), Vec3::zero()));
+        sys
+    }
+
+    fn two_body_system(sep: f64, mass_ratio: f64) -> GravitationalSystem {
+        let m1 = 1.989e30;
+        let m2 = m1 * mass_ratio;
+        let r = sep;
+        let v = (crate::G * (m1 + m2) / r).sqrt();
+        // 质心约化
+        let r1 = r * m2 / (m1 + m2);
+        let r2 = r * m1 / (m1 + m2);
+        let v1 = v * m2 / (m1 + m2);
+        let v2 = v * m1 / (m1 + m2);
+        let mut sys = GravitationalSystem::new(1e-6);
+        sys.add_body(GravBody::new("Body1", m1, 1.0,
+            Vec3::new(-r1, 0.0, 0.0), Vec3::new(0.0, -v1, 0.0)));
+        sys.add_body(GravBody::new("Body2", m2, 1.0,
+            Vec3::new(r2, 0.0, 0.0), Vec3::new(0.0, v2, 0.0)));
+        sys
+    }
+
+    #[test]
+    fn test_grav_system_new() {
+        let sys = GravitationalSystem::new(0.1);
+        assert!(sys.bodies.is_empty());
+        assert_eq!(sys.time, 0.0);
+        assert!(sys.softening_squared > 0.0);
+    }
+
+    #[test]
+    fn test_grav_body_new() {
+        let b = GravBody::new("Earth", 5.972e24, 6_371_000.0,
+            Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        assert_eq!(b.name, "Earth");
+        assert!((b.mass - 5.972e24).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_grav_add_body() {
+        let mut sys = GravitationalSystem::new(1e-6);
+        sys.add_body(GravBody::new("A", 1.0, 1.0,
+            Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new("B", 1.0, 1.0,
+            Vec3::new(1.0, 0.0, 0.0), Vec3::zero()));
+        assert_eq!(sys.bodies.len(), 2);
+    }
+
+    #[test]
+    fn test_gravitation_acceleration() {
+        let mut sys = GravitationalSystem::new(0.0); // 无软化
+        sys.add_body(GravBody::new("M1", 1.0, 1.0,
+            Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new("M2", 1.0, 1.0,
+            Vec3::new(1.0, 0.0, 0.0), Vec3::zero()));
+        let a = sys.acceleration(0);
+        // G*1*1/1² = G 指向 +x
+        assert!(a.x > 0.0);
+        assert!((a.y).abs() < 1e-20);
+        assert_eq!(a.x, crate::G);
+    }
+
+    #[test]
+    fn test_grav_two_body_energy_conservation_leapfrog() {
+        // 双体圆轨道, leapfrog 应保持能量
+        let sep = 1.496e11; // 1 AU
+        let mut sys = two_body_system(sep, 0.001);
+        let e0 = sys.total_energy();
+
+        // 跑 10 个轨道周期
+        let orbital_period = 2.0 * std::f64::consts::PI
+            * (sep.powi(3) / (crate::G * (1.989e30 * 1.001))).sqrt();
+        let dt = orbital_period / 10000.0; // 每轨道 10000 步
+        let n_steps = (10.0 * orbital_period / dt) as i32;
+
+        for _ in 0..n_steps {
+            sys.step_leapfrog(dt);
+        }
+
+        let e1 = sys.total_energy();
+        let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
+        // Leapfrog 是辛, 能量漂移应 < 1e-6 每轨道
+        assert!(rel_error < 1e-4,
+            "Energy drift too large: {} over {} orbits", rel_error, 10);
+        assert!(!sys.has_collision());
+    }
+
+    #[test]
+    fn test_grav_two_body_energy_conservation_symplectic4() {
+        let sep = 1.496e11;
+        let mut sys = two_body_system(sep, 0.001);
+        let e0 = sys.total_energy();
+        let orbital_period = 2.0 * std::f64::consts::PI
+            * (sep.powi(3) / (crate::G * (1.989e30 * 1.001))).sqrt();
+        let dt = orbital_period / 1000.0; // 每轨道 1000 步 (s4 精度高)
+        let n_steps = (100.0 * orbital_period / dt) as i32;
+
+        for _ in 0..n_steps {
+            sys.step_symplectic4(dt);
+        }
+
+        let e1 = sys.total_energy();
+        let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
+        // 4 阶辛应远优于 2 阶
+        assert!(rel_error < 1e-8,
+            "Symplectic4 energy drift too large: {} over {} orbits", rel_error, 100);
+        assert!(!sys.has_collision());
+    }
+
+    #[test]
+    fn test_grav_angular_momentum_conservation() {
+        let sep = 1.496e11;
+        let mut sys = two_body_system(sep, 0.5);
+        let L0 = sys.total_angular_momentum();
+        let orbital_period = 2.0 * std::f64::consts::PI
+            * (sep.powi(3) / (crate::G * (1.989e30 * 1.5))).sqrt();
+        let dt = orbital_period / 5000.0;
+        let n_steps = (50.0 * orbital_period / dt) as i32;
+
+        for _ in 0..n_steps {
+            sys.step_leapfrog(dt);
+        }
+
+        let L1 = sys.total_angular_momentum();
+        // 角动量应精确守恒 (辛积分器)
+        let dL = (L1 - L0).length();
+        let Lmag = L0.length();
+        assert!(dL < Lmag * 1e-12,
+            "Angular momentum drift: {} relative", dL / Lmag);
+    }
+
+    #[test]
+    fn test_grav_three_body_hierarchical() {
+        // 恒星 + 两颗行星 (稳定 hierarchical 三体)
+        let m_star = 1.989e30;
+        // 内行星 (类地, 0.5 AU)
+        // 外行星 (类木, 3 AU) — 稳定比例 > 2.5×
+        let inner_r = 0.5 * 1.496e11;
+        let outer_r = 3.0 * 1.496e11;
+        let m_inner = 5.972e24;
+        let m_outer = 1.898e27;
+
+        let mut sys = GravitationalSystem::new(1e8);
+        // 恒星固定在质心
+        sys.add_body(GravBody::new("Star", m_star, 6.96e8,
+            Vec3::zero(), Vec3::zero()));
+        // 内行星
+        let v_inner = (crate::G * m_star / inner_r).sqrt();
+        sys.add_body(GravBody::new("Inner", m_inner, 6.371e6,
+            Vec3::new(inner_r, 0.0, 0.0), Vec3::new(0.0, v_inner, 0.0)));
+        // 外行星
+        let v_outer = (crate::G * m_star / outer_r).sqrt();
+        sys.add_body(GravBody::new("Outer", m_outer, 6.991e7,
+            Vec3::new(0.0, outer_r, 0.0), Vec3::new(-v_outer, 0.0, 0.0)));
+
+        let e0 = sys.total_energy();
+        let inner_period = 2.0 * std::f64::consts::PI
+            * (inner_r.powi(3) / (crate::G * m_star)).sqrt();
+
+        // 跑 100 个内行星周期
+        let dt = inner_period / 500.0;
+        let n_steps = (100.0 * inner_period / dt) as i32;
+
+        for _ in 0..n_steps {
+            sys.step_symplectic4(dt);
+        }
+
+        let e1 = sys.total_energy();
+        let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
+        assert!(rel_error < 1e-6,
+            "Energy drift too large in 3-body: {}", rel_error);
+        assert!(!sys.has_collision(),
+            "Collision in stable hierarchical 3-body!");
+    }
+
+    #[test]
+    fn test_grav_adaptive_step() {
+        let sep = 1.496e11;
+        let mut sys = two_body_system(sep, 1.0);
+        let orbital_period = 2.0 * std::f64::consts::PI
+            * (sep.powi(3) / (crate::G * (1.989e30 * 2.0))).sqrt();
+
+        let e0 = sys.total_energy();
+        let max_dt = orbital_period / 1000.0;
+        let min_dt = max_dt * 1e-9;
+
+        // 自适应步进跑 10 个轨道
+        let mut t = 0.0;
+        while t < 10.0 * orbital_period {
+            let actual_dt = sys.step_adaptive(max_dt, min_dt);
+            t += actual_dt;
+        }
+
+        let e1 = sys.total_energy();
+        let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
+        assert!(rel_error < 1e-6,
+            "Adaptive step energy drift: {}", rel_error);
+    }
+
+    #[test]
+    fn test_grav_min_distance() {
+        let sep = 1.496e11;
+        let mut sys = two_body_system(sep, 1.0);
+        let d = sys.min_distance();
+        assert!((d - sep).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_grav_collision_detection() {
+        let mut sys = GravitationalSystem::new(0.0);
+        // 两个体重叠
+        sys.add_body(GravBody::new("A", 1.0, 5.0,
+            Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new("B", 1.0, 5.0,
+            Vec3::new(3.0, 0.0, 0.0), Vec3::zero()));
+        assert!(sys.has_collision()); // 距离 3 < 半径和 10
+    }
+
+    #[test]
+    fn test_grav_run_duration() {
+        let mut sys = simple_system();
+        sys.add_body(GravBody::new("planet", 1.0, 1.0,
+            Vec3::new(1.496e11, 0.0, 0.0), Vec3::new(0.0, 3e4, 0.0)));
+        let e0 = sys.total_energy();
+        sys.run(3.15576e7, 1e4, true, false); // 1 年, 10000s 步
+        let e1 = sys.total_energy();
+        let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
+        assert!(rel_error < 1e-4);
+    }
+
+    #[test]
+    fn test_grav_figure8_stable() {
+        // Chenciner-Montgomery 图-8 轨道: G=m=1 归一化
+        let m = 1.0 / crate::G; // 使 G*m = 1
+        let mut sys = GravitationalSystem::new(0.0);
+        sys.add_body(GravBody::new("A", m, 0.01,
+            Vec3::new(-0.97000436, 0.24308753, 0.0),
+            Vec3::new(0.4662036850, 0.4323657300, 0.0)));
+        sys.add_body(GravBody::new("B", m, 0.01,
+            Vec3::zero(),
+            Vec3::new(-0.93240737, -0.86473146, 0.0)));
+        sys.add_body(GravBody::new("C", m, 0.01,
+            Vec3::new(0.97000436, -0.24308753, 0.0),
+            Vec3::new(0.4662036850, 0.4323657300, 0.0)));
+        let period = 6.3259;
+        let dt = period / 1000.0;
+        let e0 = sys.total_energy();
+        let L0 = sys.total_angular_momentum();
+        // 1000 个周期验证长期稳定性
+        for _ in 0..1_000_000 {
+            sys.step_symplectic4(dt);
+        }
+        let e1 = sys.total_energy();
+        let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
+        assert!(rel_error < 1e-10, "Figure-8 energy drift: {}", rel_error);
+        assert!(!sys.has_collision(), "Figure-8: no collisions");
+        // 图-8 总角动量为零, 浮点误差不具参考性, 不检查
+    }
+
+    #[test]
+    fn test_grav_long_term_conservation() {
+        // 等效数十亿年能量守恒验证 (用紧轨道 + 大量步)
+        let m_star = 1.989e30;
+        let r = 1.0 * 1.496e11;
+        let v = (crate::G * m_star / r).sqrt();
+        let mut sys = GravitationalSystem::new(r * 1e-4);
+        sys.add_body(GravBody::new("Star", m_star, 6.96e8,
+            Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new("Planet", 5.972e24, 6.371e6,
+            Vec3::new(r, 0.0, 0.0), Vec3::new(0.0, v, 0.0)));
+        let period = 2.0 * std::f64::consts::PI
+            * (r.powi(3) / (crate::G * m_star)).sqrt();
+        let dt = period / 1000.0;
+        let e0 = sys.total_energy();
+        for _ in 0..10_000_000 {
+            sys.step_leapfrog(dt);
+        }
+        let e1 = sys.total_energy();
+        let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
+        assert!(rel_error < 1e-8,
+            "Long-term energy drift: {}", rel_error);
+        assert!(!sys.has_collision());
     }
 }
