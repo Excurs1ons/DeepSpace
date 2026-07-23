@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## 项目定位
-`DeepSpace` 是基于 Mock 引擎接口的 C++20 航天模拟项目，当前主线是 `Artemis II` 任务模板与高拟真推进系统（双组元、分级、轨道机动、事件驱动遥测）。最终将迁移到真实 PrismaEngine SDK。
+`DeepSpace` 是基于 Mock 引擎接口的 C++20 航天模拟项目，当前主线是 `Artemis II` 任务模板与高拟真推进系统（双组元、分级、轨道机动、事件驱动遥测）。最终将迁移到真实 PrismaEngine SDK。深空算法层（Lambert/积分器/任务链）为独立纯函数模块，可经 FFI/独立验证供引擎调用。
 
 ## 项目结构与模块组织
 - `src/main.cpp`：程序入口（Mock驱动）。
@@ -10,9 +10,8 @@
 - `src/physics/`：动力学积分、空气动力学、轨道要素与轨道预判。
 - `src/environment/`：行星与大气模型。
 - `src/vessel/`：部件、分级、RCS、推进剂路由、节流控制。
-- `src/engine/`：**Mock引擎接口层**（待替换为真实SDK）。
-- `src/telemetry/`：遥测日志系统。
-- `src/ui/`：HUD界面组件。
+- `src/mission/`：任务模板与飞行计划（Artemis II 等）。
+- `src/engine/`：**Mock引擎接口层**（`MockEngine.h/.cpp`；`engine/ui/MockUI.h/.cpp`，待替换为真实SDK）。
 - `DESIGN.md`、`DEVELOPMENT.md`：设计路线与技术积累。
 
 ## 开发策略：Mock-First 引擎接口
@@ -25,13 +24,11 @@
 ### Mock引擎接口清单
 ```
 src/engine/
-├── MockEngine.h          # Mock引擎主类
-├── MockInputManager.h    # 键盘/手柄输入
-├── MockWindow.h         # 窗口管理（文本模式）
-├── MockLogger.h         # 日志输出
-├── MockSceneManager.h   # 场景管理（简化版）
-├── MockAudioManager.h   # 音频（仅日志输出）
-└── MockRenderer.h       # 渲染（占位）
+├── MockEngine.h          # Mock引擎主类（接口声明）
+├── MockEngine.cpp        # Mock引擎实现
+└── ui/
+    ├── MockUI.h          # Mock UI/HUD 接口
+    └── MockUI.cpp        # Mock UI/HUD 实现
 ```
 
 ### 切换时机
@@ -63,9 +60,9 @@ cmake --build build -j
 
 ### 并行开发许可
 - ✅ `physics/` 与 `vessel/` 可并行（独立物理域）
-- ✅ `telemetry/` 与 `environment/` 可并行（无共享）
-- ❌ `ui/` 与 `DeepSpaceApp.h` 不可并行（共享SimulationLayer）
-- ❌ `engine/mock/` 与 `simulation/` 不可并行（接口依赖）
+- ✅ `mission/` 与 `environment/` 可并行（无共享）
+- ❌ `engine/ui/` 与 `DeepSpaceApp.h` 不可并行（共享SimulationLayer）
+- ❌ `engine/` 与 `DeepSpaceApp.h` 不可并行（接口依赖）
 
 ### 冲突解决
 1. 每个代理开发独立功能模块
@@ -80,7 +77,11 @@ cmake --build build -j
 - 任务逻辑集中在独立函数（如 `BuildArtemis2FlightPlan`、`ManageMissionEvents`），避免把流程散落在 `OnUpdate`。
 
 ## 测试规范
-当前无独立 `tests/` 目录，至少完成：
+测试位于 `tests/core_tests.h`（零依赖 mini-harness）。语法校验：
+```bash
+g++ -std=c++20 -fsyntax-only -Isrc tests/core_tests.h
+```
+至少完成：
 - 全量构建通过。
 - Artemis II 烟测：起飞、Max-Q 节流、主级分离、ICPS 圆轨、Orion 接管。
 - 检查遥测：`Ap/Pe`、`q`、`Thrust`、`mdot`、`fuel/ox` 流量、阶段剩余推进剂。
