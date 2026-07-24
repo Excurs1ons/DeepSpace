@@ -178,8 +178,8 @@ impl Integrators {
 
             if err <= 1.0 {
                 *t += h;
-                let factor = (0.9 * (if err > 0.0 { 1.0 / err } else { 5.0 }).powf(0.2))
-                    .clamp(0.1, 5.0);
+                let factor =
+                    (0.9 * (if err > 0.0 { 1.0 / err } else { 5.0 }).powf(0.2)).clamp(0.1, 5.0);
                 *dt = h * factor;
                 if *t < t_end {
                     *dt = (*dt).min(t_end - *t);
@@ -238,12 +238,7 @@ impl Integrators {
             .collect()
     }
 
-    fn rkf45_step(
-        f: &DerivativeFunc,
-        t: f64,
-        y: &[f64],
-        h: f64,
-    ) -> (StateVector, StateVector) {
+    fn rkf45_step(f: &DerivativeFunc, t: f64, y: &[f64], h: f64) -> (StateVector, StateVector) {
         let n = y.len();
         let k1 = f(t, y);
         if k1.len() != n {
@@ -414,11 +409,7 @@ pub fn orbital_elements(pos: Vec3, vel: Vec3, mu: f64) -> OrbitalElements {
 pub struct OrbitalMechanics;
 
 impl OrbitalMechanics {
-    pub fn calculate_elements(
-        pos: Vec3,
-        vel: Vec3,
-        planet: &Planet,
-    ) -> OrbitalElements {
+    pub fn calculate_elements(pos: Vec3, vel: Vec3, planet: &Planet) -> OrbitalElements {
         let mu = G * planet.get_mass();
         orbital_elements(pos, vel, mu)
     }
@@ -626,7 +617,9 @@ impl GravitationalSystem {
 
     /// 所有体的加速度向量
     fn accelerations(&self) -> Vec<Vec3> {
-        (0..self.bodies.len()).map(|i| self.acceleration(i)).collect()
+        (0..self.bodies.len())
+            .map(|i| self.acceleration(i))
+            .collect()
     }
 
     // ----------------------------------------------------------------
@@ -844,7 +837,8 @@ impl GravitationalSystem {
         }
         false
     }
-}#[cfg(test)]
+}
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::environment::{Atmosphere, Planet};
@@ -884,12 +878,8 @@ mod tests {
 
     #[test]
     fn test_physics_body_mass_edge() {
-        let mut body = PhysicsBody::new(
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            0.0,
-            0.0,
-        );
+        let mut body =
+            PhysicsBody::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), 0.0, 0.0);
         body.add_force(Vec3::new(10.0, 0.0, 0.0));
         body.update(1.0);
         // mass 0 → 不应更新
@@ -898,12 +888,8 @@ mod tests {
 
     #[test]
     fn test_physics_body_orientation() {
-        let mut body = PhysicsBody::new(
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(0.0, 0.0, 0.0),
-            1.0,
-            0.0,
-        );
+        let mut body =
+            PhysicsBody::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 0.0), 1.0, 0.0);
         body.set_orientation_from_dir(Vec3::new(1.0, 0.0, 0.0));
         let dir = body.get_orientation_vec3();
         assert!((dir.x - 1.0).abs() < 1e-6);
@@ -1026,7 +1012,8 @@ mod tests {
     #[test]
     fn test_delta_v_to_raise_apoapsis() {
         let planet = test_planet();
-        let dv = OrbitalMechanics::delta_v_to_raise_apoapsis(200_000.0, 400_000.0, 200_000.0, &planet);
+        let dv =
+            OrbitalMechanics::delta_v_to_raise_apoapsis(200_000.0, 400_000.0, 200_000.0, &planet);
         assert!(dv > 0.0);
     }
 
@@ -1069,8 +1056,13 @@ mod tests {
 
     fn simple_system() -> GravitationalSystem {
         let mut sys = GravitationalSystem::new(1e-6);
-        sys.add_body(GravBody::new("Star", 1.989e30, 6.96e8,
-            Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new(
+            "Star",
+            1.989e30,
+            6.96e8,
+            Vec3::zero(),
+            Vec3::zero(),
+        ));
         sys
     }
 
@@ -1085,10 +1077,20 @@ mod tests {
         let v1 = v * m2 / (m1 + m2);
         let v2 = v * m1 / (m1 + m2);
         let mut sys = GravitationalSystem::new(1e-6);
-        sys.add_body(GravBody::new("Body1", m1, 1.0,
-            Vec3::new(-r1, 0.0, 0.0), Vec3::new(0.0, -v1, 0.0)));
-        sys.add_body(GravBody::new("Body2", m2, 1.0,
-            Vec3::new(r2, 0.0, 0.0), Vec3::new(0.0, v2, 0.0)));
+        sys.add_body(GravBody::new(
+            "Body1",
+            m1,
+            1.0,
+            Vec3::new(-r1, 0.0, 0.0),
+            Vec3::new(0.0, -v1, 0.0),
+        ));
+        sys.add_body(GravBody::new(
+            "Body2",
+            m2,
+            1.0,
+            Vec3::new(r2, 0.0, 0.0),
+            Vec3::new(0.0, v2, 0.0),
+        ));
         sys
     }
 
@@ -1102,8 +1104,13 @@ mod tests {
 
     #[test]
     fn test_grav_body_new() {
-        let b = GravBody::new("Earth", 5.972e24, 6_371_000.0,
-            Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        let b = GravBody::new(
+            "Earth",
+            5.972e24,
+            6_371_000.0,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
         assert_eq!(b.name, "Earth");
         assert!((b.mass - 5.972e24).abs() < 1.0);
     }
@@ -1111,20 +1118,28 @@ mod tests {
     #[test]
     fn test_grav_add_body() {
         let mut sys = GravitationalSystem::new(1e-6);
-        sys.add_body(GravBody::new("A", 1.0, 1.0,
-            Vec3::zero(), Vec3::zero()));
-        sys.add_body(GravBody::new("B", 1.0, 1.0,
-            Vec3::new(1.0, 0.0, 0.0), Vec3::zero()));
+        sys.add_body(GravBody::new("A", 1.0, 1.0, Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new(
+            "B",
+            1.0,
+            1.0,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::zero(),
+        ));
         assert_eq!(sys.bodies.len(), 2);
     }
 
     #[test]
     fn test_gravitation_acceleration() {
         let mut sys = GravitationalSystem::new(0.0); // 无软化
-        sys.add_body(GravBody::new("M1", 1.0, 1.0,
-            Vec3::zero(), Vec3::zero()));
-        sys.add_body(GravBody::new("M2", 1.0, 1.0,
-            Vec3::new(1.0, 0.0, 0.0), Vec3::zero()));
+        sys.add_body(GravBody::new("M1", 1.0, 1.0, Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new(
+            "M2",
+            1.0,
+            1.0,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::zero(),
+        ));
         let a = sys.acceleration(0);
         // G*1*1/1² = G 指向 +x
         assert!(a.x > 0.0);
@@ -1140,8 +1155,8 @@ mod tests {
         let e0 = sys.total_energy();
 
         // 跑 10 个轨道周期
-        let orbital_period = 2.0 * std::f64::consts::PI
-            * (sep.powi(3) / (crate::G * (1.989e30 * 1.001))).sqrt();
+        let orbital_period =
+            2.0 * std::f64::consts::PI * (sep.powi(3) / (crate::G * (1.989e30 * 1.001))).sqrt();
         let dt = orbital_period / 10000.0; // 每轨道 10000 步
         let n_steps = (10.0 * orbital_period / dt) as i32;
 
@@ -1152,8 +1167,12 @@ mod tests {
         let e1 = sys.total_energy();
         let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
         // Leapfrog 是辛, 能量漂移应 < 1e-6 每轨道
-        assert!(rel_error < 1e-4,
-            "Energy drift too large: {} over {} orbits", rel_error, 10);
+        assert!(
+            rel_error < 1e-4,
+            "Energy drift too large: {} over {} orbits",
+            rel_error,
+            10
+        );
         assert!(!sys.has_collision());
     }
 
@@ -1162,8 +1181,8 @@ mod tests {
         let sep = 1.496e11;
         let mut sys = two_body_system(sep, 0.001);
         let e0 = sys.total_energy();
-        let orbital_period = 2.0 * std::f64::consts::PI
-            * (sep.powi(3) / (crate::G * (1.989e30 * 1.001))).sqrt();
+        let orbital_period =
+            2.0 * std::f64::consts::PI * (sep.powi(3) / (crate::G * (1.989e30 * 1.001))).sqrt();
         let dt = orbital_period / 1000.0; // 每轨道 1000 步 (s4 精度高)
         let n_steps = (100.0 * orbital_period / dt) as i32;
 
@@ -1174,8 +1193,12 @@ mod tests {
         let e1 = sys.total_energy();
         let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
         // 4 阶辛应远优于 2 阶
-        assert!(rel_error < 1e-8,
-            "Symplectic4 energy drift too large: {} over {} orbits", rel_error, 100);
+        assert!(
+            rel_error < 1e-8,
+            "Symplectic4 energy drift too large: {} over {} orbits",
+            rel_error,
+            100
+        );
         assert!(!sys.has_collision());
     }
 
@@ -1184,8 +1207,8 @@ mod tests {
         let sep = 1.496e11;
         let mut sys = two_body_system(sep, 0.5);
         let L0 = sys.total_angular_momentum();
-        let orbital_period = 2.0 * std::f64::consts::PI
-            * (sep.powi(3) / (crate::G * (1.989e30 * 1.5))).sqrt();
+        let orbital_period =
+            2.0 * std::f64::consts::PI * (sep.powi(3) / (crate::G * (1.989e30 * 1.5))).sqrt();
         let dt = orbital_period / 5000.0;
         let n_steps = (50.0 * orbital_period / dt) as i32;
 
@@ -1197,8 +1220,11 @@ mod tests {
         // 角动量应精确守恒 (辛积分器)
         let dL = (L1 - L0).length();
         let Lmag = L0.length();
-        assert!(dL < Lmag * 1e-12,
-            "Angular momentum drift: {} relative", dL / Lmag);
+        assert!(
+            dL < Lmag * 1e-12,
+            "Angular momentum drift: {} relative",
+            dL / Lmag
+        );
     }
 
     #[test]
@@ -1214,20 +1240,35 @@ mod tests {
 
         let mut sys = GravitationalSystem::new(1e8);
         // 恒星固定在质心
-        sys.add_body(GravBody::new("Star", m_star, 6.96e8,
-            Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new(
+            "Star",
+            m_star,
+            6.96e8,
+            Vec3::zero(),
+            Vec3::zero(),
+        ));
         // 内行星
         let v_inner = (crate::G * m_star / inner_r).sqrt();
-        sys.add_body(GravBody::new("Inner", m_inner, 6.371e6,
-            Vec3::new(inner_r, 0.0, 0.0), Vec3::new(0.0, v_inner, 0.0)));
+        sys.add_body(GravBody::new(
+            "Inner",
+            m_inner,
+            6.371e6,
+            Vec3::new(inner_r, 0.0, 0.0),
+            Vec3::new(0.0, v_inner, 0.0),
+        ));
         // 外行星
         let v_outer = (crate::G * m_star / outer_r).sqrt();
-        sys.add_body(GravBody::new("Outer", m_outer, 6.991e7,
-            Vec3::new(0.0, outer_r, 0.0), Vec3::new(-v_outer, 0.0, 0.0)));
+        sys.add_body(GravBody::new(
+            "Outer",
+            m_outer,
+            6.991e7,
+            Vec3::new(0.0, outer_r, 0.0),
+            Vec3::new(-v_outer, 0.0, 0.0),
+        ));
 
         let e0 = sys.total_energy();
-        let inner_period = 2.0 * std::f64::consts::PI
-            * (inner_r.powi(3) / (crate::G * m_star)).sqrt();
+        let inner_period =
+            2.0 * std::f64::consts::PI * (inner_r.powi(3) / (crate::G * m_star)).sqrt();
 
         // 跑 100 个内行星周期
         let dt = inner_period / 500.0;
@@ -1239,18 +1280,23 @@ mod tests {
 
         let e1 = sys.total_energy();
         let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
-        assert!(rel_error < 1e-6,
-            "Energy drift too large in 3-body: {}", rel_error);
-        assert!(!sys.has_collision(),
-            "Collision in stable hierarchical 3-body!");
+        assert!(
+            rel_error < 1e-6,
+            "Energy drift too large in 3-body: {}",
+            rel_error
+        );
+        assert!(
+            !sys.has_collision(),
+            "Collision in stable hierarchical 3-body!"
+        );
     }
 
     #[test]
     fn test_grav_adaptive_step() {
         let sep = 1.496e11;
         let mut sys = two_body_system(sep, 1.0);
-        let orbital_period = 2.0 * std::f64::consts::PI
-            * (sep.powi(3) / (crate::G * (1.989e30 * 2.0))).sqrt();
+        let orbital_period =
+            2.0 * std::f64::consts::PI * (sep.powi(3) / (crate::G * (1.989e30 * 2.0))).sqrt();
 
         let e0 = sys.total_energy();
         let max_dt = orbital_period / 1000.0;
@@ -1265,8 +1311,11 @@ mod tests {
 
         let e1 = sys.total_energy();
         let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
-        assert!(rel_error < 1e-6,
-            "Adaptive step energy drift: {}", rel_error);
+        assert!(
+            rel_error < 1e-6,
+            "Adaptive step energy drift: {}",
+            rel_error
+        );
     }
 
     #[test]
@@ -1281,18 +1330,27 @@ mod tests {
     fn test_grav_collision_detection() {
         let mut sys = GravitationalSystem::new(0.0);
         // 两个体重叠
-        sys.add_body(GravBody::new("A", 1.0, 5.0,
-            Vec3::zero(), Vec3::zero()));
-        sys.add_body(GravBody::new("B", 1.0, 5.0,
-            Vec3::new(3.0, 0.0, 0.0), Vec3::zero()));
+        sys.add_body(GravBody::new("A", 1.0, 5.0, Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new(
+            "B",
+            1.0,
+            5.0,
+            Vec3::new(3.0, 0.0, 0.0),
+            Vec3::zero(),
+        ));
         assert!(sys.has_collision()); // 距离 3 < 半径和 10
     }
 
     #[test]
     fn test_grav_run_duration() {
         let mut sys = simple_system();
-        sys.add_body(GravBody::new("planet", 1.0, 1.0,
-            Vec3::new(1.496e11, 0.0, 0.0), Vec3::new(0.0, 3e4, 0.0)));
+        sys.add_body(GravBody::new(
+            "planet",
+            1.0,
+            1.0,
+            Vec3::new(1.496e11, 0.0, 0.0),
+            Vec3::new(0.0, 3e4, 0.0),
+        ));
         let e0 = sys.total_energy();
         sys.run(3.15576e7, 1e4, true, false); // 1 年, 10000s 步
         let e1 = sys.total_energy();
@@ -1305,15 +1363,27 @@ mod tests {
         // Chenciner-Montgomery 图-8 轨道: G=m=1 归一化
         let m = 1.0 / crate::G; // 使 G*m = 1
         let mut sys = GravitationalSystem::new(0.0);
-        sys.add_body(GravBody::new("A", m, 0.01,
+        sys.add_body(GravBody::new(
+            "A",
+            m,
+            0.01,
             Vec3::new(-0.97000436, 0.24308753, 0.0),
-            Vec3::new(0.4662036850, 0.4323657300, 0.0)));
-        sys.add_body(GravBody::new("B", m, 0.01,
+            Vec3::new(0.4662036850, 0.4323657300, 0.0),
+        ));
+        sys.add_body(GravBody::new(
+            "B",
+            m,
+            0.01,
             Vec3::zero(),
-            Vec3::new(-0.93240737, -0.86473146, 0.0)));
-        sys.add_body(GravBody::new("C", m, 0.01,
+            Vec3::new(-0.93240737, -0.86473146, 0.0),
+        ));
+        sys.add_body(GravBody::new(
+            "C",
+            m,
+            0.01,
             Vec3::new(0.97000436, -0.24308753, 0.0),
-            Vec3::new(0.4662036850, 0.4323657300, 0.0)));
+            Vec3::new(0.4662036850, 0.4323657300, 0.0),
+        ));
         let period = 6.3259;
         let dt = period / 1000.0;
         let e0 = sys.total_energy();
@@ -1336,12 +1406,21 @@ mod tests {
         let r = 1.0 * 1.496e11;
         let v = (crate::G * m_star / r).sqrt();
         let mut sys = GravitationalSystem::new(r * 1e-4);
-        sys.add_body(GravBody::new("Star", m_star, 6.96e8,
-            Vec3::zero(), Vec3::zero()));
-        sys.add_body(GravBody::new("Planet", 5.972e24, 6.371e6,
-            Vec3::new(r, 0.0, 0.0), Vec3::new(0.0, v, 0.0)));
-        let period = 2.0 * std::f64::consts::PI
-            * (r.powi(3) / (crate::G * m_star)).sqrt();
+        sys.add_body(GravBody::new(
+            "Star",
+            m_star,
+            6.96e8,
+            Vec3::zero(),
+            Vec3::zero(),
+        ));
+        sys.add_body(GravBody::new(
+            "Planet",
+            5.972e24,
+            6.371e6,
+            Vec3::new(r, 0.0, 0.0),
+            Vec3::new(0.0, v, 0.0),
+        ));
+        let period = 2.0 * std::f64::consts::PI * (r.powi(3) / (crate::G * m_star)).sqrt();
         let dt = period / 1000.0;
         let e0 = sys.total_energy();
         for _ in 0..10_000_000 {
@@ -1349,8 +1428,7 @@ mod tests {
         }
         let e1 = sys.total_energy();
         let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
-        assert!(rel_error < 1e-8,
-            "Long-term energy drift: {}", rel_error);
+        assert!(rel_error < 1e-8, "Long-term energy drift: {}", rel_error);
         assert!(!sys.has_collision());
     }
 }

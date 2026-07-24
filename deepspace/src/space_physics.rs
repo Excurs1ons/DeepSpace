@@ -18,7 +18,7 @@
 
 use crate::core::{Mat3x3, Quaternion};
 use crate::physics::{GravitationalSystem, OrbitalElements};
-use crate::{G, Vec3};
+use crate::{Vec3, G};
 
 // =====================================================================
 // 推力器
@@ -128,11 +128,19 @@ impl SpacecraftBody {
         self.position += self.velocity * dt;
 
         // --- 转动 ---
-        let ang_accel = self.inertia_tensor.inverse().mul_vec(&self.accumulated_torque);
+        let ang_accel = self
+            .inertia_tensor
+            .inverse()
+            .mul_vec(&self.accumulated_torque);
         self.angular_velocity += ang_accel * dt;
 
         // 四元数更新: q_new = q + 0.5 · ω_q · q · dt
-        let wq = Quaternion::new(0.0, self.angular_velocity.x, self.angular_velocity.y, self.angular_velocity.z);
+        let wq = Quaternion::new(
+            0.0,
+            self.angular_velocity.x,
+            self.angular_velocity.y,
+            self.angular_velocity.z,
+        );
         let dq = wq.mul(&self.orientation);
         let half_dt = 0.5 * dt;
         self.orientation = Quaternion::new(
@@ -153,7 +161,10 @@ impl SpacecraftBody {
     /// 仅适用于椭圆的纯引力巡航段（推力器应已关闭）。
     pub fn propagate_kepler(&mut self, dt: f64, mu: f64) {
         let elems = crate::physics::orbital_elements(self.position, self.velocity, mu);
-        let ea = kepler_equation(elems.mean_anomaly + mean_motion(&elems, mu) * dt, elems.eccentricity);
+        let ea = kepler_equation(
+            elems.mean_anomaly + mean_motion(&elems, mu) * dt,
+            elems.eccentricity,
+        );
         let (sin_ea, cos_ea) = ea.sin_cos();
         let ecc = elems.eccentricity;
 
@@ -233,7 +244,10 @@ impl SoiTree {
 
         let mut indices: Vec<usize> = (0..n).collect();
         indices.sort_by(|&a, &b| {
-            sys.bodies[b].mass.partial_cmp(&sys.bodies[a].mass).unwrap_or(std::cmp::Ordering::Equal)
+            sys.bodies[b]
+                .mass
+                .partial_cmp(&sys.bodies[a].mass)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let mut nodes: Vec<SoiNode> = Vec::with_capacity(n);
@@ -260,7 +274,10 @@ impl SoiTree {
                     }
                 }
 
-                let parent_node_idx = nodes.iter().position(|n| n.body_idx == best_parent).unwrap_or(0);
+                let parent_node_idx = nodes
+                    .iter()
+                    .position(|n| n.body_idx == best_parent)
+                    .unwrap_or(0);
                 let parent_mass = sys.bodies[best_parent].mass;
                 let soi_radius = if parent_mass > 0.0 {
                     best_dist * (my_mass / parent_mass).powf(0.4)
@@ -415,17 +432,33 @@ impl FlightAssist {
             }
             SasMode::Prograde | SasMode::Retrograde => {
                 let target_dir = if let SasMode::Retrograde = self.mode {
-                    if vel.length() > 1e-12 { -(vel / vel.length()) } else { Vec3::new(0.0, 1.0, 0.0) }
+                    if vel.length() > 1e-12 {
+                        -(vel / vel.length())
+                    } else {
+                        Vec3::new(0.0, 1.0, 0.0)
+                    }
                 } else {
-                    if vel.length() > 1e-12 { vel / vel.length() } else { Vec3::new(0.0, 1.0, 0.0) }
+                    if vel.length() > 1e-12 {
+                        vel / vel.length()
+                    } else {
+                        Vec3::new(0.0, 1.0, 0.0)
+                    }
                 };
                 pointing_torque(ship, target_dir, self.kp, self.kd, self.max_torque)
             }
             SasMode::Normal | SasMode::AntiNormal => {
                 // 轨道法线 = 速度 × 位置（归一化）
                 let h = vel.cross(&ship.position);
-                let normal = if h.length() > 1e-12 { h / h.length() } else { Vec3::new(0.0, 0.0, 1.0) };
-                let target_dir = if let SasMode::AntiNormal = self.mode { -normal } else { normal };
+                let normal = if h.length() > 1e-12 {
+                    h / h.length()
+                } else {
+                    Vec3::new(0.0, 0.0, 1.0)
+                };
+                let target_dir = if let SasMode::AntiNormal = self.mode {
+                    -normal
+                } else {
+                    normal
+                };
                 pointing_torque(ship, target_dir, self.kp, self.kd, self.max_torque)
             }
         }
@@ -433,7 +466,13 @@ impl FlightAssist {
 }
 
 /// 指向目标方向所需的控制扭矩（PD 控制器）
-fn pointing_torque(ship: &SpacecraftBody, target_dir: Vec3, kp: f64, kd: f64, max_torque: f64) -> Vec3 {
+fn pointing_torque(
+    ship: &SpacecraftBody,
+    target_dir: Vec3,
+    kp: f64,
+    kd: f64,
+    max_torque: f64,
+) -> Vec3 {
     let current_dir = ship.orientation.rotate(&Vec3::new(0.0, 1.0, 0.0));
     let error_angle = current_dir.cross(&target_dir);
     // 比例项
@@ -536,18 +575,26 @@ fn rk4_step(f: &Box<dyn Fn(f64, &[f64]) -> Vec<f64>>, t: f64, y: &[f64], h: f64)
     let k1 = f(t, y);
     let mut tmp = vec![0.0; n];
     let k2 = {
-        for i in 0..n { tmp[i] = y[i] + 0.5 * h * k1[i]; }
+        for i in 0..n {
+            tmp[i] = y[i] + 0.5 * h * k1[i];
+        }
         f(t + 0.5 * h, &tmp)
     };
     let k3 = {
-        for i in 0..n { tmp[i] = y[i] + 0.5 * h * k2[i]; }
+        for i in 0..n {
+            tmp[i] = y[i] + 0.5 * h * k2[i];
+        }
         f(t + 0.5 * h, &tmp)
     };
     let k4 = {
-        for i in 0..n { tmp[i] = y[i] + h * k3[i]; }
+        for i in 0..n {
+            tmp[i] = y[i] + h * k3[i];
+        }
         f(t + h, &tmp)
     };
-    (0..n).map(|i| y[i] + h * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]) / 6.0).collect()
+    (0..n)
+        .map(|i| y[i] + h * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]) / 6.0)
+        .collect()
 }
 
 // =====================================================================
@@ -668,7 +715,8 @@ impl SpacePhysicsWorld {
 
             // b. 推力器
             if thrust_allowed {
-                let forces: Vec<(Vec3, Vec3)> = ship.thrusters
+                let forces: Vec<(Vec3, Vec3)> = ship
+                    .thrusters
                     .iter()
                     .filter(|t| t.active && t.max_thrust > 0.0)
                     .map(|t| {
@@ -721,10 +769,18 @@ mod tests {
 
     fn test_solar_system() -> GravitationalSystem {
         let mut sys = GravitationalSystem::new(1e6);
-        sys.add_body(GravBody::new("Sun", 1.989e30, 6.96e8, Vec3::zero(), Vec3::zero()));
+        sys.add_body(GravBody::new(
+            "Sun",
+            1.989e30,
+            6.96e8,
+            Vec3::zero(),
+            Vec3::zero(),
+        ));
         let earth_pos = Vec3::new(1.496e11, 0.0, 0.0);
         let earth_vel = Vec3::new(0.0, 29_780.0, 0.0);
-        sys.add_body(GravBody::new("Earth", 5.972e24, 6.371e6, earth_pos, earth_vel));
+        sys.add_body(GravBody::new(
+            "Earth", 5.972e24, 6.371e6, earth_pos, earth_vel,
+        ));
         let moon_pos = Vec3::new(1.496e11 + 3.844e8, 0.0, 0.0);
         let moon_vel = Vec3::new(0.0, 29_780.0 + 1_022.0, 0.0);
         sys.add_body(GravBody::new("Moon", 7.342e22, 1.737e6, moon_pos, moon_vel));
@@ -732,7 +788,12 @@ mod tests {
     }
 
     fn dummy_ship() -> SpacecraftBody {
-        SpacecraftBody::new(Vec3::new(1.496e11, 7.0e6, 0.0), Vec3::new(0.0, 29_780.0, 0.0), 10_000.0, (5000.0, 8000.0, 6000.0))
+        SpacecraftBody::new(
+            Vec3::new(1.496e11, 7.0e6, 0.0),
+            Vec3::new(0.0, 29_780.0, 0.0),
+            10_000.0,
+            (5000.0, 8000.0, 6000.0),
+        )
     }
 
     // ---------------------------------------------------------------
@@ -776,7 +837,8 @@ mod tests {
 
     #[test]
     fn test_force_at_center_no_torque() {
-        let mut ship = SpacecraftBody::new(Vec3::zero(), Vec3::zero(), 1000.0, (100.0, 200.0, 150.0));
+        let mut ship =
+            SpacecraftBody::new(Vec3::zero(), Vec3::zero(), 1000.0, (100.0, 200.0, 150.0));
         ship.add_force(Vec3::new(1000.0, 0.0, 0.0));
         ship.step(1.0);
         assert!(ship.velocity.x > 0.0);
@@ -785,7 +847,8 @@ mod tests {
 
     #[test]
     fn test_force_at_point_creates_torque() {
-        let mut ship = SpacecraftBody::new(Vec3::zero(), Vec3::zero(), 1000.0, (100.0, 200.0, 150.0));
+        let mut ship =
+            SpacecraftBody::new(Vec3::zero(), Vec3::zero(), 1000.0, (100.0, 200.0, 150.0));
         ship.add_force_at_point(Vec3::new(0.0, 100.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         ship.step(1.0);
         assert!(ship.angular_velocity.length() > 0.0);
@@ -794,15 +857,27 @@ mod tests {
 
     #[test]
     fn test_thruster_applied_in_local_frame() {
-        let mut ship = SpacecraftBody::new(Vec3::zero(), Vec3::zero(), 1000.0, (100.0, 200.0, 150.0));
-        ship.add_thruster(Thruster::new(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), 100.0));
+        let mut ship =
+            SpacecraftBody::new(Vec3::zero(), Vec3::zero(), 1000.0, (100.0, 200.0, 150.0));
+        ship.add_thruster(Thruster::new(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            100.0,
+        ));
         ship.thrusters[0].active = true;
-        let forces: Vec<(Vec3, Vec3)> = ship.thrusters.iter().filter(|t| t.active).map(|t| {
-            let world_dir = ship.orientation.rotate(&t.direction);
-            let world_pos = ship.position + ship.orientation.rotate(&t.position);
-            (world_dir * t.max_thrust, world_pos)
-        }).collect();
-        for (force, pos) in forces { ship.add_force_at_point(force, pos); }
+        let forces: Vec<(Vec3, Vec3)> = ship
+            .thrusters
+            .iter()
+            .filter(|t| t.active)
+            .map(|t| {
+                let world_dir = ship.orientation.rotate(&t.direction);
+                let world_pos = ship.position + ship.orientation.rotate(&t.position);
+                (world_dir * t.max_thrust, world_pos)
+            })
+            .collect();
+        for (force, pos) in forces {
+            ship.add_force_at_point(force, pos);
+        }
         ship.step(1.0);
         assert!(ship.velocity.y > 0.0);
         assert!(ship.angular_velocity.length() > 0.0);
@@ -855,7 +930,7 @@ mod tests {
         world.add_spacecraft(ship);
         // 此时 host = Sun
         assert_eq!(world.spacecraft[0].current_host_idx, 0); // Sun's body_idx
-        // 一步后仍在深空，不应产生事件
+                                                             // 一步后仍在深空，不应产生事件
         world.step();
         assert!(world.drain_soi_events().is_empty());
     }
@@ -948,7 +1023,12 @@ mod tests {
     fn test_sas_stabilize_reduces_rotation() {
         let sys = test_solar_system();
         let mut world = SpacePhysicsWorld::new(sys, 1.0);
-        let mut ship = SpacecraftBody::new(Vec3::new(1.496e11, 7.0e6, 0.0), Vec3::new(0.0, 29_780.0, 0.0), 10_000.0, (5000.0, 8000.0, 6000.0));
+        let mut ship = SpacecraftBody::new(
+            Vec3::new(1.496e11, 7.0e6, 0.0),
+            Vec3::new(0.0, 29_780.0, 0.0),
+            10_000.0,
+            (5000.0, 8000.0, 6000.0),
+        );
         // 给一个初始角速度
         ship.angular_velocity = Vec3::new(0.1, 0.0, 0.0);
         world.add_spacecraft(ship);
@@ -958,12 +1038,20 @@ mod tests {
         let w0 = world.spacecraft[0].angular_velocity.length();
         world.step();
         let w1 = world.spacecraft[0].angular_velocity.length();
-        assert!(w1 < w0, "SAS Stabilize should reduce angular velocity: {w1} >= {w0}");
+        assert!(
+            w1 < w0,
+            "SAS Stabilize should reduce angular velocity: {w1} >= {w0}"
+        );
     }
 
     #[test]
     fn test_sas_prograde_points_forward() {
-        let mut ship = SpacecraftBody::new(Vec3::zero(), Vec3::new(0.0, 1000.0, 0.0), 1000.0, (100.0, 200.0, 150.0));
+        let mut ship = SpacecraftBody::new(
+            Vec3::zero(),
+            Vec3::new(0.0, 1000.0, 0.0),
+            1000.0,
+            (100.0, 200.0, 150.0),
+        );
         // 船头朝上（默认），速度朝 Y
         let sas = FlightAssist {
             mode: SasMode::Prograde,
@@ -973,12 +1061,20 @@ mod tests {
         };
         let torque = sas.compute_torque(&ship, ship.velocity, 0.0);
         // 当前方向 (0,1,0)，速度方向 (0,1,0) → 无误差 → 扭矩应该很小
-        assert!(torque.length() < 1.0, "already aligned, torque should be near zero: {}", torque.length());
+        assert!(
+            torque.length() < 1.0,
+            "already aligned, torque should be near zero: {}",
+            torque.length()
+        );
 
         // 旋转飞船，使船头指向 +X
-        ship.orientation = Quaternion::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), -std::f64::consts::PI / 2.0);
+        ship.orientation =
+            Quaternion::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), -std::f64::consts::PI / 2.0);
         let torque = sas.compute_torque(&ship, ship.velocity, 0.0);
         // 现在船头指向 +X，速度指向 +Y → 应该有控制扭矩
-        assert!(torque.length() > 0.0, "misaligned, torque should be non-zero");
+        assert!(
+            torque.length() > 0.0,
+            "misaligned, torque should be non-zero"
+        );
     }
 }

@@ -11,16 +11,30 @@ pub struct Quaternion {
 }
 
 impl Quaternion {
-    pub fn identity() -> Self { Self { w: 1.0, x: 0.0, y: 0.0, z: 0.0 } }
+    pub fn identity() -> Self {
+        Self {
+            w: 1.0,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
+    }
 
-    pub fn new(w: f64, x: f64, y: f64, z: f64) -> Self { Self { w, x, y, z } }
+    pub fn new(w: f64, x: f64, y: f64, z: f64) -> Self {
+        Self { w, x, y, z }
+    }
 
     /// 从轴-角创建
     pub fn from_axis_angle(axis: Vec3, angle: f64) -> Self {
         let ha = angle * 0.5;
         let s = ha.sin();
         let n = axis.normalized();
-        Self { w: ha.cos(), x: n.x * s, y: n.y * s, z: n.z * s }
+        Self {
+            w: ha.cos(),
+            x: n.x * s,
+            y: n.y * s,
+            z: n.z * s,
+        }
     }
 
     /// 从欧拉角创建 (pitch, yaw, roll)
@@ -58,13 +72,31 @@ impl Quaternion {
         )
     }
 
-    pub fn conjugate(&self) -> Self { Self { w: self.w, x: -self.x, y: -self.y, z: -self.z } }
+    pub fn conjugate(&self) -> Self {
+        Self {
+            w: self.w,
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+        }
+    }
 
-    pub fn magnitude(&self) -> f64 { (self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z).sqrt() }
+    pub fn magnitude(&self) -> f64 {
+        (self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
 
     pub fn normalized(&self) -> Self {
         let m = self.magnitude();
-        if m > 0.0 { Self { w: self.w / m, x: self.x / m, y: self.y / m, z: self.z / m } } else { Self::identity() }
+        if m > 0.0 {
+            Self {
+                w: self.w / m,
+                x: self.x / m,
+                y: self.y / m,
+                z: self.z / m,
+            }
+        } else {
+            Self::identity()
+        }
     }
 
     pub fn to_euler(&self) -> Vec3 {
@@ -72,7 +104,11 @@ impl Quaternion {
         let cosr_cosp = 1.0 - 2.0 * (self.x * self.x + self.y * self.y);
         let roll = sinr_cosp.atan2(cosr_cosp);
         let sinp = 2.0 * (self.w * self.y - self.z * self.x);
-        let pitch = if sinp.abs() >= 1.0 { (std::f64::consts::PI / 2.0).copysign(sinp) } else { sinp.asin() };
+        let pitch = if sinp.abs() >= 1.0 {
+            (std::f64::consts::PI / 2.0).copysign(sinp)
+        } else {
+            sinp.asin()
+        };
         let siny_cosp = 2.0 * (self.w * self.z + self.x * self.y);
         let cosy_cosp = 1.0 - 2.0 * (self.y * self.y + self.z * self.z);
         let yaw = siny_cosp.atan2(cosy_cosp);
@@ -82,7 +118,9 @@ impl Quaternion {
 
 impl std::ops::Mul<&Quaternion> for &Quaternion {
     type Output = Quaternion;
-    fn mul(self, o: &Quaternion) -> Quaternion { self.mul(o) }
+    fn mul(self, o: &Quaternion) -> Quaternion {
+        self.mul(o)
+    }
 }
 
 // =====================================================================
@@ -95,11 +133,15 @@ pub struct Mat3x3 {
 
 impl Mat3x3 {
     pub fn identity() -> Self {
-        Self { m: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] }
+        Self {
+            m: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        }
     }
 
     pub fn from_diag(ix: f64, iy: f64, iz: f64) -> Self {
-        Self { m: [ix, 0.0, 0.0, 0.0, iy, 0.0, 0.0, 0.0, iz] }
+        Self {
+            m: [ix, 0.0, 0.0, 0.0, iy, 0.0, 0.0, 0.0, iz],
+        }
     }
 
     pub fn rotation(axis: Vec3, angle: f64) -> Self {
@@ -107,31 +149,52 @@ impl Mat3x3 {
         let (c, s) = (angle.cos(), angle.sin());
         let t = 1.0 - c;
         Self {
-            m: [t * n.x * n.x + c,     t * n.x * n.y - n.z * s, t * n.x * n.z + n.y * s,
-                t * n.x * n.y + n.z * s, t * n.y * n.y + c,      t * n.y * n.z - n.x * s,
-                t * n.x * n.z - n.y * s, t * n.y * n.z + n.x * s, t * n.z * n.z + c],
+            m: [
+                t * n.x * n.x + c,
+                t * n.x * n.y - n.z * s,
+                t * n.x * n.z + n.y * s,
+                t * n.x * n.y + n.z * s,
+                t * n.y * n.y + c,
+                t * n.y * n.z - n.x * s,
+                t * n.x * n.z - n.y * s,
+                t * n.y * n.z + n.x * s,
+                t * n.z * n.z + c,
+            ],
         }
     }
 
     pub fn mul_mat(&self, o: &Mat3x3) -> Mat3x3 {
         let (a, b) = (&self.m, &o.m);
         Self {
-            m: [a[0]*b[0]+a[1]*b[3]+a[2]*b[6], a[0]*b[1]+a[1]*b[4]+a[2]*b[7], a[0]*b[2]+a[1]*b[5]+a[2]*b[8],
-                a[3]*b[0]+a[4]*b[3]+a[5]*b[6], a[3]*b[1]+a[4]*b[4]+a[5]*b[7], a[3]*b[2]+a[4]*b[5]+a[5]*b[8],
-                a[6]*b[0]+a[7]*b[3]+a[8]*b[6], a[6]*b[1]+a[7]*b[4]+a[8]*b[7], a[6]*b[2]+a[7]*b[5]+a[8]*b[8]],
+            m: [
+                a[0] * b[0] + a[1] * b[3] + a[2] * b[6],
+                a[0] * b[1] + a[1] * b[4] + a[2] * b[7],
+                a[0] * b[2] + a[1] * b[5] + a[2] * b[8],
+                a[3] * b[0] + a[4] * b[3] + a[5] * b[6],
+                a[3] * b[1] + a[4] * b[4] + a[5] * b[7],
+                a[3] * b[2] + a[4] * b[5] + a[5] * b[8],
+                a[6] * b[0] + a[7] * b[3] + a[8] * b[6],
+                a[6] * b[1] + a[7] * b[4] + a[8] * b[7],
+                a[6] * b[2] + a[7] * b[5] + a[8] * b[8],
+            ],
         }
     }
 
     pub fn mul_vec(&self, v: &Vec3) -> Vec3 {
-        Vec3::new(self.m[0]*v.x + self.m[1]*v.y + self.m[2]*v.z,
-                  self.m[3]*v.x + self.m[4]*v.y + self.m[5]*v.z,
-                  self.m[6]*v.x + self.m[7]*v.y + self.m[8]*v.z)
+        Vec3::new(
+            self.m[0] * v.x + self.m[1] * v.y + self.m[2] * v.z,
+            self.m[3] * v.x + self.m[4] * v.y + self.m[5] * v.z,
+            self.m[6] * v.x + self.m[7] * v.y + self.m[8] * v.z,
+        )
     }
 
     pub fn transpose(&self) -> Self {
-        Self { m: [self.m[0], self.m[3], self.m[6],
-                   self.m[1], self.m[4], self.m[7],
-                   self.m[2], self.m[5], self.m[8]] }
+        Self {
+            m: [
+                self.m[0], self.m[3], self.m[6], self.m[1], self.m[4], self.m[7], self.m[2],
+                self.m[5], self.m[8],
+            ],
+        }
     }
 
     pub fn determinant(&self) -> f64 {
@@ -142,12 +205,22 @@ impl Mat3x3 {
 
     pub fn inverse(&self) -> Self {
         let d = self.determinant();
-        if d.abs() < 1e-15 { return Self::identity(); }
+        if d.abs() < 1e-15 {
+            return Self::identity();
+        }
         let inv = 1.0 / d;
         Self {
-            m: [(self.m[4]*self.m[8]-self.m[5]*self.m[7])*inv, (self.m[2]*self.m[7]-self.m[1]*self.m[8])*inv, (self.m[1]*self.m[5]-self.m[2]*self.m[4])*inv,
-                (self.m[5]*self.m[6]-self.m[3]*self.m[8])*inv, (self.m[0]*self.m[8]-self.m[2]*self.m[6])*inv, (self.m[2]*self.m[3]-self.m[0]*self.m[5])*inv,
-                (self.m[3]*self.m[7]-self.m[4]*self.m[6])*inv, (self.m[1]*self.m[6]-self.m[0]*self.m[7])*inv, (self.m[0]*self.m[4]-self.m[1]*self.m[3])*inv],
+            m: [
+                (self.m[4] * self.m[8] - self.m[5] * self.m[7]) * inv,
+                (self.m[2] * self.m[7] - self.m[1] * self.m[8]) * inv,
+                (self.m[1] * self.m[5] - self.m[2] * self.m[4]) * inv,
+                (self.m[5] * self.m[6] - self.m[3] * self.m[8]) * inv,
+                (self.m[0] * self.m[8] - self.m[2] * self.m[6]) * inv,
+                (self.m[2] * self.m[3] - self.m[0] * self.m[5]) * inv,
+                (self.m[3] * self.m[7] - self.m[4] * self.m[6]) * inv,
+                (self.m[1] * self.m[6] - self.m[0] * self.m[7]) * inv,
+                (self.m[0] * self.m[4] - self.m[1] * self.m[3]) * inv,
+            ],
         }
     }
 }
@@ -235,7 +308,9 @@ mod tests {
 
     #[test]
     fn mat3x3_transpose() {
-        let m = Mat3x3 { m: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0] };
+        let m = Mat3x3 {
+            m: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+        };
         let t = m.transpose();
         assert!((t.m[1] - 4.0).abs() < TOL);
         assert!((t.m[3] - 2.0).abs() < TOL);
@@ -261,7 +336,7 @@ mod tests {
         let m = Mat3x3::from_diag(2.0, 3.0, 4.0);
         let inv = m.inverse();
         assert!((inv.m[0] - 0.5).abs() < TOL);
-        assert!((inv.m[4] - 1.0/3.0).abs() < TOL);
+        assert!((inv.m[4] - 1.0 / 3.0).abs() < TOL);
         assert!((inv.m[8] - 0.25).abs() < TOL);
     }
 }

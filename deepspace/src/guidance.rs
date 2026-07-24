@@ -154,7 +154,10 @@ impl FlightComputer {
             "cosine" => Box::new(CosineGuidance::new()),
             "peg" => Box::new(PEGGuidance::new()),
             _ => {
-                eprintln!("  WARNING: Unknown guidance algorithm '{}', falling back to cosine", name);
+                eprintln!(
+                    "  WARNING: Unknown guidance algorithm '{}', falling back to cosine",
+                    name
+                );
                 Box::new(CosineGuidance::new())
             }
         }
@@ -341,7 +344,7 @@ mod tests {
     fn test_cosine_guidance_horizontal_at_end() {
         let mut guid = CosineGuidance::new();
         let config = GuidanceConfig::default(); // pitch_end=20000, pitch_end_angle=85°
-        // 超过 pitch_end → 保持终点俯仰角 (85°)
+                                                // 超过 pitch_end → 保持终点俯仰角 (85°)
         let state = GuidanceState {
             altitude: 30000.0,
             ..dummy_state()
@@ -359,9 +362,18 @@ mod tests {
         };
         let cmd = guid.compute(&state, &config);
         // 应该有水平和垂直分量
-        assert!(cmd.thrust_direction.length() > 0.99, "should be unit vector");
-        assert!(cmd.thrust_direction.x.abs() > 0.1, "should have some horizontal component");
-        assert!(cmd.thrust_direction.y > 0.3, "should have some vertical component");
+        assert!(
+            cmd.thrust_direction.length() > 0.99,
+            "should be unit vector"
+        );
+        assert!(
+            cmd.thrust_direction.x.abs() > 0.1,
+            "should have some horizontal component"
+        );
+        assert!(
+            cmd.thrust_direction.y > 0.3,
+            "should have some vertical component"
+        );
     }
 
     #[test]

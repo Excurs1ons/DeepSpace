@@ -2,17 +2,13 @@
 //!
 //! 提供轨道相机、行星绘制、姿态 Gizmo、轨迹线等功能。
 
+use macroquad::camera::{set_camera, set_default_camera, Camera3D};
 use macroquad::color::Color;
+use macroquad::input::{is_mouse_button_down, mouse_position, mouse_wheel, MouseButton};
 use macroquad::math::{Quat, Vec3};
-use macroquad::models::{
-    draw_line_3d, draw_sphere,
-};
+use macroquad::models::{draw_line_3d, draw_sphere};
 use macroquad::shapes::draw_line;
 use macroquad::text::draw_text;
-use macroquad::camera::{set_camera, set_default_camera, Camera3D};
-use macroquad::input::{
-    is_mouse_button_down, mouse_position, mouse_wheel, MouseButton,
-};
 
 // =====================================================================
 // 轨道相机
@@ -71,8 +67,7 @@ impl OrbitalCamera {
                 let dx = mx - px;
                 let dy = my - py;
                 self.azimuth -= dx * self.sensitivity;
-                self.elevation = (self.elevation + dy * self.sensitivity)
-                    .clamp(-1.5, 1.5);
+                self.elevation = (self.elevation + dy * self.sensitivity).clamp(-1.5, 1.5);
             }
             self.prev_mouse = Some((mx, my));
         } else {
@@ -85,7 +80,9 @@ impl OrbitalCamera {
             // 用 signum 取方向忽略幅值，确保每格滚轮固定缩放 zoom_sensitivity
             let dir = dy.signum();
             self.target_distance *= (-dir * self.zoom_sensitivity).exp();
-            self.target_distance = self.target_distance.clamp(self.min_distance, self.max_distance);
+            self.target_distance = self
+                .target_distance
+                .clamp(self.min_distance, self.max_distance);
         }
 
         // 平滑趋近目标距离（每帧 15%，约 15 帧到达 90%）
@@ -324,7 +321,11 @@ pub fn draw_predicted_path(points: &[deepspace::Vec3], color: Color) {
     // 虚线：隔一段画一段
     for i in (0..points.len() - 1).step_by(2) {
         let p0 = Vec3::new(points[i].x as f32, points[i].y as f32, points[i].z as f32);
-        let p1 = Vec3::new(points[i + 1].x as f32, points[i + 1].y as f32, points[i + 1].z as f32);
+        let p1 = Vec3::new(
+            points[i + 1].x as f32,
+            points[i + 1].y as f32,
+            points[i + 1].z as f32,
+        );
         draw_line_3d(p0, p1, color);
     }
 }
@@ -434,7 +435,9 @@ pub fn draw_attitude_indicator_2d(
 
 /// 画 2D 圆环（自适应分段，大圆用更多段避免锯齿）
 pub fn draw_circle_2d(cx: f32, cy: f32, radius: f32, color: Color) {
-    if radius < 0.5 { return; }
+    if radius < 0.5 {
+        return;
+    }
     // 像素半径越大段数越多，保证视觉平滑。放大后可达 256 段
     let segs = (12.0 + radius * 0.3).min(256.0) as u32;
     let step = std::f32::consts::TAU / segs as f32;
@@ -444,9 +447,12 @@ pub fn draw_circle_2d(cx: f32, cy: f32, radius: f32, color: Color) {
         let (s0, c0) = a0.sin_cos();
         let (s1, c1) = a1.sin_cos();
         draw_line(
-            cx + c0 * radius, cy + s0 * radius,
-            cx + c1 * radius, cy + s1 * radius,
-            1.0, color,
+            cx + c0 * radius,
+            cy + s0 * radius,
+            cx + c1 * radius,
+            cy + s1 * radius,
+            1.0,
+            color,
         );
     }
 }
@@ -522,12 +528,7 @@ pub fn draw_grid_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32)
 }
 
 /// 投影绘制 2D 轨迹线
-pub fn draw_path_2d(
-    camera: &OrbitalCamera,
-    points: &[Vec3],
-    sw: f32, sh: f32,
-    color: Color,
-) {
+pub fn draw_path_2d(camera: &OrbitalCamera, points: &[Vec3], sw: f32, sh: f32, color: Color) {
     for w in points.windows(2) {
         let (x1, y1) = camera.project_2d(w[0], sw, sh);
         let (x2, y2) = camera.project_2d(w[1], sw, sh);
@@ -539,7 +540,8 @@ pub fn draw_path_2d(
 pub fn draw_predicted_path_2d(
     camera: &OrbitalCamera,
     points: &[deepspace::Vec3],
-    sw: f32, sh: f32,
+    sw: f32,
+    sh: f32,
     color: Color,
 ) {
     if points.len() < 2 {
@@ -550,7 +552,11 @@ pub fn draw_predicted_path_2d(
     for i in 0..points.len() - 1 {
         c.a = if i % 2 == 0 { color.a } else { color.a * 0.2 };
         let p0 = Vec3::new(points[i].x as f32, points[i].y as f32, points[i].z as f32);
-        let p1 = Vec3::new(points[i + 1].x as f32, points[i + 1].y as f32, points[i + 1].z as f32);
+        let p1 = Vec3::new(
+            points[i + 1].x as f32,
+            points[i + 1].y as f32,
+            points[i + 1].z as f32,
+        );
         let (x1, y1) = camera.project_2d(p0, sw, sh);
         let (x2, y2) = camera.project_2d(p1, sw, sh);
         draw_line(x1, y1, x2, y2, 1.0, c);
@@ -563,12 +569,15 @@ pub fn draw_rocket_2d(
     pos: Vec3,
     vel: Vec3,
     earth_radius: f32,
-    sw: f32, sh: f32,
+    sw: f32,
+    sh: f32,
 ) {
     let (rx, ry) = camera.project_2d(pos, sw, sh);
 
     // 火箭位置圆点
-    let marker_r = camera.len_to_px(2000.0_f32.max(earth_radius * 0.003), sw, sh).max(2.5);
+    let marker_r = camera
+        .len_to_px(2000.0_f32.max(earth_radius * 0.003), sw, sh)
+        .max(2.5);
     draw_circle_2d(rx, ry, marker_r, COLOR_SHIP);
 
     // 速度方向箭头（纯 2D 屏幕空间，固定像素长度）
@@ -601,16 +610,20 @@ pub fn draw_rocket_2d(
         // 箭头
         let head = 7.0;
         draw_line(
-            ax, ay,
+            ax,
+            ay,
             ax - nx * head + ny * head * 0.5,
             ay + ny * head + nx * head * 0.5,
-            1.5, COLOR_GIZMO_Y,
+            1.5,
+            COLOR_GIZMO_Y,
         );
         draw_line(
-            ax, ay,
+            ax,
+            ay,
             ax - nx * head - ny * head * 0.5,
             ay + ny * head - nx * head * 0.5,
-            1.5, COLOR_GIZMO_Y,
+            1.5,
+            COLOR_GIZMO_Y,
         );
     }
 }
@@ -704,11 +717,11 @@ pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
             // 任务结束：全部灰化，仅结果高亮
             ("\u{2713}", Color::new(0.3, 0.4, 0.4, 0.5))
         } else if state.phase_idx.map_or(false, |c| i < c) {
-            ("\u{2713}", Color::new(0.4, 0.5, 0.5, 0.5))       // ✓ 已完成
+            ("\u{2713}", Color::new(0.4, 0.5, 0.5, 0.5)) // ✓ 已完成
         } else if state.phase_idx.map_or(false, |c| i == c) {
-            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0))       // ▶ 当前
+            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0)) // ▶ 当前
         } else {
-            ("\u{25CB}", Color::new(0.3, 0.3, 0.4, 0.6))       // ○ 待执行
+            ("\u{25CB}", Color::new(0.3, 0.3, 0.4, 0.6)) // ○ 待执行
         };
 
         draw_text(icon, x, py, 12.0, color);
@@ -723,8 +736,10 @@ pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
         };
         draw_text(
             &format!("OUTCOME: {}", state.outcome),
-            x, y + 6.0 + ARTEMIS_PHASES.len() as f32 * line_h + 4.0,
-            14.0, rc,
+            x,
+            y + 6.0 + ARTEMIS_PHASES.len() as f32 * line_h + 4.0,
+            14.0,
+            rc,
         );
     }
 }
@@ -742,11 +757,11 @@ pub fn draw_task_panel(state: &MissionDisplayState, x: f32, y: f32) {
         let active = state.task_highlight.map_or(false, |h| i == h);
 
         let (icon, color) = if done {
-            ("\u{2713}", Color::new(0.35, 0.45, 0.45, 0.5))      // ✓ 已完成
+            ("\u{2713}", Color::new(0.35, 0.45, 0.45, 0.5)) // ✓ 已完成
         } else if active {
-            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0))          // ▶ 执行中
+            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0)) // ▶ 执行中
         } else {
-            ("\u{25CB}", Color::new(0.25, 0.25, 0.35, 0.5))       // ○ 待执行
+            ("\u{25CB}", Color::new(0.25, 0.25, 0.35, 0.5)) // ○ 待执行
         };
 
         draw_text(icon, x, py, 11.0, color);

@@ -25,9 +25,9 @@ fn headless_main(args: CliArgs) {
 // 3D 可视化模式
 // =====================================================================
 async fn viz_main(args: CliArgs) {
-    use macroquad::prelude::*;
-    use macroquad::math::Vec3;
     use demo::render::*;
+    use macroquad::math::Vec3;
+    use macroquad::prelude::*;
 
     // 时间倍率，不受显示器帧率影响
     let mut time_warp: f64 = 1.0;
@@ -64,7 +64,9 @@ async fn viz_main(args: CliArgs) {
                 time_warp = 0.001;
             } else if time_warp < 0.0 {
                 time_warp /= 10.0;
-                if time_warp.abs() < 0.001 { time_warp = 0.001; }
+                if time_warp.abs() < 0.001 {
+                    time_warp = 0.001;
+                }
             } else {
                 time_warp = (time_warp * 10.0).min(1000.0);
             }
@@ -74,7 +76,9 @@ async fn viz_main(args: CliArgs) {
                 time_warp = -0.001;
             } else if time_warp > 0.0 {
                 time_warp /= 10.0;
-                if time_warp.abs() < 0.001 { time_warp = -0.001; }
+                if time_warp.abs() < 0.001 {
+                    time_warp = -0.001;
+                }
             } else {
                 time_warp = (time_warp * 10.0).max(-1000.0);
             }
@@ -84,8 +88,8 @@ async fn viz_main(args: CliArgs) {
         // 2. 物理步进（基于真实帧间隔 × 时间倍率，帧率无关，支持倒放）
         // -----------------------------------------------------------------
         if !app.mission_complete {
-            let real_dt = get_frame_time() as f64;          // 真实秒数
-            let sim_dt = real_dt * time_warp;               // 可为负（倒放）
+            let real_dt = get_frame_time() as f64; // 真实秒数
+            let sim_dt = real_dt * time_warp; // 可为负（倒放）
             let n_substeps = ((sim_dt.abs() / 0.016).ceil().max(1.0)) as usize;
             let sub_dt = sim_dt / n_substeps as f64;
             for _ in 0..n_substeps {
@@ -102,15 +106,22 @@ async fn viz_main(args: CliArgs) {
             }
         }
 
-            // 预测轨道（从当前状态前向传播，仅二体引力）
-            let current_pos = *app.vessel.body.get_position();
-            let current_vel = *app.vessel.body.get_velocity();
-            if current_vel.length() > 10.0 {
-                let raw = predict_trajectory(current_pos, current_vel, EARTH_MU, 15000.0, 800, app.earth.get_radius());
-                predicted_path = raw.iter().map(|&p| to_mvec3(p)).collect();
-            } else {
-                predicted_path.clear();
-            }
+        // 预测轨道（从当前状态前向传播，仅二体引力）
+        let current_pos = *app.vessel.body.get_position();
+        let current_vel = *app.vessel.body.get_velocity();
+        if current_vel.length() > 10.0 {
+            let raw = predict_trajectory(
+                current_pos,
+                current_vel,
+                EARTH_MU,
+                15000.0,
+                800,
+                app.earth.get_radius(),
+            );
+            predicted_path = raw.iter().map(|&p| to_mvec3(p)).collect();
+        } else {
+            predicted_path.clear();
+        }
 
         // -----------------------------------------------------------------
         // 3. 2D 正交投影渲染 — 整个场景为 2D HUD
@@ -151,10 +162,7 @@ async fn viz_main(args: CliArgs) {
         if vel.length() > 1.0 {
             let vd = to_mvec3(vel.normalized());
             let quat = if vd.dot(Vec3::Y).abs() < 0.999 {
-                Quat::from_axis_angle(
-                    Vec3::Y.cross(vd).normalize(),
-                    Vec3::Y.dot(vd).acos(),
-                )
+                Quat::from_axis_angle(Vec3::Y.cross(vd).normalize(), Vec3::Y.dot(vd).acos())
             } else if vd.dot(Vec3::Y) > 0.0 {
                 Quat::IDENTITY
             } else {
@@ -170,35 +178,110 @@ async fn viz_main(args: CliArgs) {
         let lh = 20.0;
         let y0 = 80.0;
 
-        draw_text(&format!("Mission: {}", app.config.mission_name), 10.0, 24.0, 22.0, WHITE);
-        draw_text(&format!("T+ {:.1}s", app.simulation_time), 10.0, 48.0, 20.0, LIGHTGRAY);
+        draw_text(
+            &format!("Mission: {}", app.config.mission_name),
+            10.0,
+            24.0,
+            22.0,
+            WHITE,
+        );
+        draw_text(
+            &format!("T+ {:.1}s", app.simulation_time),
+            10.0,
+            48.0,
+            20.0,
+            LIGHTGRAY,
+        );
 
         draw_text(
-            &format!("Phase: {}", app.mission_control.current_phase.to_str()),
-            10.0, y0, 16.0, YELLOW,
+            &format!("Phase: {}", app.mission_control.phase_name),
+            10.0,
+            y0,
+            16.0,
+            YELLOW,
         );
-        draw_text(&format!("Altitude: {:.0} m", tel.altitude_m), 10.0, y0 + lh, 16.0, dc);
-        draw_text(&format!("Velocity: {:.0} m/s", tel.velocity_mps), 10.0, y0 + lh * 2.0, 16.0, dc);
-        draw_text(&format!("Mass: {:.0} kg", app.vessel.body.get_mass()), 10.0, y0 + lh * 3.0, 16.0, dc);
-        draw_text(&format!("Thrust: {:.0} kN", tel.thrust_n / 1000.0), 10.0, y0 + lh * 4.0, 16.0, dc);
-        draw_text(&format!("Throttle: {:.0}%", tel.throttle_pct * 100.0), 10.0, y0 + lh * 5.0, 16.0, dc);
-        draw_text(&format!("Mach: {:.2}", tel.mach), 10.0, y0 + lh * 6.0, 16.0, dc);
-        draw_text(&format!("Q: {:.0} Pa", tel.dynamic_pressure_pa), 10.0, y0 + lh * 7.0, 16.0, dc);
-        draw_text(&format!("Stage: {}", app.vessel.current_stage), 10.0, y0 + lh * 8.0, 16.0, dc);
+        draw_text(
+            &format!("Altitude: {:.0} m", tel.altitude_m),
+            10.0,
+            y0 + lh,
+            16.0,
+            dc,
+        );
+        draw_text(
+            &format!("Velocity: {:.0} m/s", tel.velocity_mps),
+            10.0,
+            y0 + lh * 2.0,
+            16.0,
+            dc,
+        );
+        draw_text(
+            &format!("Mass: {:.0} kg", app.vessel.body.get_mass()),
+            10.0,
+            y0 + lh * 3.0,
+            16.0,
+            dc,
+        );
+        draw_text(
+            &format!("Thrust: {:.0} kN", tel.thrust_n / 1000.0),
+            10.0,
+            y0 + lh * 4.0,
+            16.0,
+            dc,
+        );
+        draw_text(
+            &format!("Throttle: {:.0}%", tel.throttle_pct * 100.0),
+            10.0,
+            y0 + lh * 5.0,
+            16.0,
+            dc,
+        );
+        draw_text(
+            &format!("Mach: {:.2}", tel.mach),
+            10.0,
+            y0 + lh * 6.0,
+            16.0,
+            dc,
+        );
+        draw_text(
+            &format!("Q: {:.0} Pa", tel.dynamic_pressure_pa),
+            10.0,
+            y0 + lh * 7.0,
+            16.0,
+            dc,
+        );
+        draw_text(
+            &format!("Stage: {}", app.vessel.current_stage),
+            10.0,
+            y0 + lh * 8.0,
+            16.0,
+            dc,
+        );
         draw_text(
             &format!("Apoapsis: {:.0} km", tel.orbit.apoapsis_m / 1000.0),
-            10.0, y0 + lh * 9.0, 16.0, dc,
+            10.0,
+            y0 + lh * 9.0,
+            16.0,
+            dc,
         );
         draw_text(
             &format!("Periapsis: {:.0} km", tel.orbit.periapsis_m / 1000.0),
-            10.0, y0 + lh * 10.0, 16.0, dc,
+            10.0,
+            y0 + lh * 10.0,
+            16.0,
+            dc,
         );
         draw_text(
             &format!(
                 "Orbit: {}",
-                if tel.orbit.is_bound { "Bound" } else { "Suborbital" }
+                if tel.orbit.is_bound {
+                    "Bound"
+                } else {
+                    "Suborbital"
+                }
             ),
-            10.0, y0 + lh * 11.0, 16.0,
+            10.0,
+            y0 + lh * 11.0,
+            16.0,
             if tel.orbit.is_bound { GREEN } else { YELLOW },
         );
 
@@ -214,15 +297,15 @@ async fn viz_main(args: CliArgs) {
 
             // 直接映射已知阶段（MissionEvents 返回 None 走启发式）
             let direct = match p {
-                PreLaunch => Some(0),                    // PRE_LAUNCH
-                Launch => Some(1),                       // LAUNCH
-                Ascent | MaxQ => Some(2),                // ASCENT
+                PreLaunch => Some(0),                                 // PRE_LAUNCH
+                Launch => Some(1),                                    // LAUNCH
+                Ascent | MaxQ => Some(2),                             // ASCENT
                 Orbit | Staging | Coast | Circularization => Some(3), // ORBIT
-                Tei => Some(4),                          // TLI
-                Translunar => Some(5),                   // TRANSLUNAR
-                Reentry => Some(8),                      // REENTRY
-                Success | Failure | Abort => Some(9),    // SUCCESS
-                MissionEvents => None,                   // 需要启发式
+                Tei => Some(4),                                       // TLI
+                Translunar => Some(5),                                // TRANSLUNAR
+                Reentry => Some(8),                                   // REENTRY
+                Success | Failure | Abort => Some(9),                 // SUCCESS
+                MissionEvents => None,                                // 需要启发式
             };
 
             // 有直接映射且非 Translunar/MissionEvents → 直接返回
@@ -231,12 +314,17 @@ async fn viz_main(args: CliArgs) {
                     // Translunar/MissionEvents 下用时间细分
                     let alt = tel.altitude_m;
                     if app.simulation_time > 300_000.0 {
-                        if alt < 200_000.0 { Some(8) }      // REENTRY
-                        else { Some(7) }                     // RETURN
+                        if alt < 200_000.0 {
+                            Some(8)
+                        }
+                        // REENTRY
+                        else {
+                            Some(7)
+                        } // RETURN
                     } else if app.simulation_time > 150_000.0 {
-                        Some(6)                              // LUNAR_FLYBY
+                        Some(6) // LUNAR_FLYBY
                     } else {
-                        Some(5)                              // TRANSLUNAR
+                        Some(5) // TRANSLUNAR
                     }
                 } else {
                     direct
@@ -247,8 +335,11 @@ async fn viz_main(args: CliArgs) {
                 if app.mission_complete {
                     Some(9)
                 } else if app.simulation_time > 300_000.0 {
-                    if alt < 200_000.0 { Some(8) }
-                    else { Some(7) }
+                    if alt < 200_000.0 {
+                        Some(8)
+                    } else {
+                        Some(7)
+                    }
                 } else if app.simulation_time > 150_000.0 {
                     Some(6)
                 } else {
@@ -267,34 +358,61 @@ async fn viz_main(args: CliArgs) {
 
             // 逐级判断已完成任务
             // 1. Liftoff
-            if mc.mission_time > 1.0 { tasks_done = 1; }
+            if mc.mission_time > 1.0 {
+                tasks_done = 1;
+            }
             // 2. SRB Separation — stage moved past SRB stage (stage >= 2)
-            if stage >= 2 { tasks_done = tasks_done.max(2); }
+            if stage >= 2 {
+                tasks_done = tasks_done.max(2);
+            }
             // 3. MaxQ
-            if mc.max_q_passed || alt > 50_000.0 { tasks_done = tasks_done.max(3); }
+            if mc.max_q_passed || alt > 50_000.0 {
+                tasks_done = tasks_done.max(3);
+            }
             // 4. MECO / Staging — cutoff_fired or stage >= 3
-            if mc.cutoff_fired || stage >= 3 { tasks_done = tasks_done.max(4); }
+            if mc.cutoff_fired || stage >= 3 {
+                tasks_done = tasks_done.max(4);
+            }
             // 5. ICPS Circularization — icps_ignited && in orbit
-            if mc.icps_ignited && bound { tasks_done = tasks_done.max(5); }
+            if mc.icps_ignited && bound {
+                tasks_done = tasks_done.max(5);
+            }
             // 6. TLI Burn — apoapsis > 400,000 km
-            if apo > 400_000_000.0 { tasks_done = tasks_done.max(6); }
+            if apo > 400_000_000.0 {
+                tasks_done = tasks_done.max(6);
+            }
             // 7. Orion Separation — time-based heuristic after TLI
-            if apo > 400_000_000.0 && app.simulation_time > 30_000.0 { tasks_done = tasks_done.max(7); }
+            if apo > 400_000_000.0 && app.simulation_time > 30_000.0 {
+                tasks_done = tasks_done.max(7);
+            }
             // 8. Lunar Flyby — time-based
-            if app.simulation_time > 200_000.0 { tasks_done = tasks_done.max(8); }
+            if app.simulation_time > 200_000.0 {
+                tasks_done = tasks_done.max(8);
+            }
             // 9. Return Cruise
-            if app.simulation_time > 500_000.0 { tasks_done = tasks_done.max(9); }
+            if app.simulation_time > 500_000.0 {
+                tasks_done = tasks_done.max(9);
+            }
             // 10. SM Separation — altitude dropping below 200km on return
-            if app.simulation_time > 800_000.0 && alt < 200_000.0 { tasks_done = tasks_done.max(10); }
+            if app.simulation_time > 800_000.0 && alt < 200_000.0 {
+                tasks_done = tasks_done.max(10);
+            }
             // 11. Reentry
-            if alt < 100_000.0 && app.simulation_time > 850_000.0 { tasks_done = tasks_done.max(11); }
+            if alt < 100_000.0 && app.simulation_time > 850_000.0 {
+                tasks_done = tasks_done.max(11);
+            }
             // 12. Splashdown / Landing
-            if app.mission_complete && mc.outcome == deepspace::simulation::MissionOutcome::Success {
+            if app.mission_complete && mc.outcome == deepspace::simulation::MissionOutcome::Success
+            {
                 tasks_done = tasks_done.max(12);
             }
 
             // 当前高亮任务：第一个未完成的
-            if tasks_done < 12 { Some(tasks_done) } else { None }
+            if tasks_done < 12 {
+                Some(tasks_done)
+            } else {
+                None
+            }
         };
 
         let mission_state = MissionDisplayState {
@@ -310,13 +428,13 @@ async fn viz_main(args: CliArgs) {
         draw_task_panel(&mission_state, screen_width() - 140.0, 220.0);
 
         let warp_color = if time_warp < -0.01 {
-            Color::new(1.0, 0.2, 0.2, 1.0)       // 红色 = 倒放
+            Color::new(1.0, 0.2, 0.2, 1.0) // 红色 = 倒放
         } else if time_warp > 1.0 {
-            Color::new(1.0, 0.6, 0.0, 1.0)       // 橙色 = 快进
+            Color::new(1.0, 0.6, 0.0, 1.0) // 橙色 = 快进
         } else if time_warp < 0.99 {
-            Color::new(0.3, 0.8, 1.0, 1.0)       // 蓝色 = 慢放
+            Color::new(0.3, 0.8, 1.0, 1.0) // 蓝色 = 慢放
         } else {
-            LIGHTGRAY                              // 灰色 = 1:1
+            LIGHTGRAY // 灰色 = 1:1
         };
         let warp_label = if time_warp.abs() < 0.1 {
             format!("Time warp: {:.4}x", time_warp)
@@ -335,7 +453,10 @@ async fn viz_main(args: CliArgs) {
 
         draw_text(
             "Left-drag: Rotate | Scroll: Zoom | T: Track | ←→: Warp | ESC: Exit",
-            10.0, screen_height() - 50.0, 14.0, DARKGRAY,
+            10.0,
+            screen_height() - 50.0,
+            14.0,
+            DARKGRAY,
         );
 
         next_frame().await;

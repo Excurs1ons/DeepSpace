@@ -1,7 +1,7 @@
 //! 飞船系统：Part、Vessel、RCS、Staging、Docking、EnduranceStation
 
-use crate::Vec3;
 use crate::physics::PhysicsBody;
+use crate::Vec3;
 
 // =====================================================================
 // 推进剂类型
@@ -53,38 +53,72 @@ pub struct Part {
 }
 
 impl Part {
-    pub fn new_engine(name: &str, dry_mass: f64, max_thrust_sl: f64, isp_sl: f64, isp_vac: f64,
-                      fuel_type: PropellantType, ox_type: PropellantType, mixture_ratio: f64) -> Self {
+    pub fn new_engine(
+        name: &str,
+        dry_mass: f64,
+        max_thrust_sl: f64,
+        isp_sl: f64,
+        isp_vac: f64,
+        fuel_type: PropellantType,
+        ox_type: PropellantType,
+        mixture_ratio: f64,
+    ) -> Self {
         Part {
             kind: PartKind::Engine(EnginePart {
-                max_thrust_sl, isp_sl, isp_vac,
-                throttle: 0.0, fuel_type, ox_type, mixture_ratio,
+                max_thrust_sl,
+                isp_sl,
+                isp_vac,
+                throttle: 0.0,
+                fuel_type,
+                ox_type,
+                mixture_ratio,
             }),
-            name: name.to_string(), dry_mass,
-            active: false, stage: -1, decoupled: false, persistent: false,
+            name: name.to_string(),
+            dry_mass,
+            active: false,
+            stage: -1,
+            decoupled: false,
+            persistent: false,
         }
     }
 
-    pub fn new_fuel_tank(name: &str, dry_mass: f64, capacity: f64, propellant: PropellantType) -> Self {
+    pub fn new_fuel_tank(
+        name: &str,
+        dry_mass: f64,
+        capacity: f64,
+        propellant: PropellantType,
+    ) -> Self {
         Part {
             kind: PartKind::FuelTank(FuelTankPart {
-                capacity, current_fuel: capacity, propellant,
+                capacity,
+                current_fuel: capacity,
+                propellant,
             }),
-            name: name.to_string(), dry_mass,
-            active: false, stage: -1, decoupled: false, persistent: false,
+            name: name.to_string(),
+            dry_mass,
+            active: false,
+            stage: -1,
+            decoupled: false,
+            persistent: false,
         }
     }
 
     pub fn new_decoupler(name: &str, mass: f64) -> Self {
         Part {
             kind: PartKind::Decoupler(DecouplerPart),
-            name: name.to_string(), dry_mass: mass,
-            active: false, stage: -1, decoupled: false, persistent: false,
+            name: name.to_string(),
+            dry_mass: mass,
+            active: false,
+            stage: -1,
+            decoupled: false,
+            persistent: false,
         }
     }
 
     pub fn get_mass(&self) -> f64 {
-        if self.decoupled { return 0.0; }
+        if self.decoupled {
+            return 0.0;
+        }
         match &self.kind {
             PartKind::Engine(_) => self.dry_mass,
             PartKind::FuelTank(t) => self.dry_mass + t.current_fuel,
@@ -92,21 +126,35 @@ impl Part {
         }
     }
 
-    pub fn is_active(&self) -> bool { self.active && !self.decoupled }
+    pub fn is_active(&self) -> bool {
+        self.active && !self.decoupled
+    }
 
     // ---- 向下转型辅助 ----
 
     pub fn as_engine(&self) -> Option<&EnginePart> {
-        match &self.kind { PartKind::Engine(e) => Some(e), _ => None }
+        match &self.kind {
+            PartKind::Engine(e) => Some(e),
+            _ => None,
+        }
     }
     pub fn as_engine_mut(&mut self) -> Option<&mut EnginePart> {
-        match &mut self.kind { PartKind::Engine(e) => Some(e), _ => None }
+        match &mut self.kind {
+            PartKind::Engine(e) => Some(e),
+            _ => None,
+        }
     }
     pub fn as_tank(&self) -> Option<&FuelTankPart> {
-        match &self.kind { PartKind::FuelTank(t) => Some(t), _ => None }
+        match &self.kind {
+            PartKind::FuelTank(t) => Some(t),
+            _ => None,
+        }
     }
     pub fn as_tank_mut(&mut self) -> Option<&mut FuelTankPart> {
-        match &mut self.kind { PartKind::FuelTank(t) => Some(t), _ => None }
+        match &mut self.kind {
+            PartKind::FuelTank(t) => Some(t),
+            _ => None,
+        }
     }
 }
 
@@ -130,13 +178,19 @@ impl EnginePart {
     }
 
     pub fn fuel_mass_fraction(&self) -> f64 {
-        if self.ox_type == PropellantType::None || self.mixture_ratio <= 0.0 { 1.0 }
-        else { 1.0 / (1.0 + self.mixture_ratio) }
+        if self.ox_type == PropellantType::None || self.mixture_ratio <= 0.0 {
+            1.0
+        } else {
+            1.0 / (1.0 + self.mixture_ratio)
+        }
     }
 
     pub fn ox_mass_fraction(&self) -> f64 {
-        if self.ox_type == PropellantType::None || self.mixture_ratio <= 0.0 { 0.0 }
-        else { self.mixture_ratio / (1.0 + self.mixture_ratio) }
+        if self.ox_type == PropellantType::None || self.mixture_ratio <= 0.0 {
+            0.0
+        } else {
+            self.mixture_ratio / (1.0 + self.mixture_ratio)
+        }
     }
 
     pub fn current_isp(&self, ambient_pressure: f64) -> f64 {
@@ -150,13 +204,19 @@ impl EnginePart {
     }
 
     pub fn get_thrust(&self, ambient_pressure: f64) -> f64 {
-        if self.throttle <= 0.0 { return 0.0; }
+        if self.throttle <= 0.0 {
+            return 0.0;
+        }
         let mdot = self.max_mass_flow_rate();
         mdot * 9.80665 * self.current_isp(ambient_pressure) * self.throttle
     }
 
     pub fn current_mass_flow_rate(&self) -> f64 {
-        if self.throttle <= 0.0 { 0.0 } else { self.max_mass_flow_rate() * self.throttle }
+        if self.throttle <= 0.0 {
+            0.0
+        } else {
+            self.max_mass_flow_rate() * self.throttle
+        }
     }
 }
 
@@ -211,27 +271,46 @@ pub struct Rcs {
 }
 
 impl Rcs {
-    pub fn new(power: f64) -> Self { Rcs { power, enabled: false } }
+    pub fn new(power: f64) -> Self {
+        Rcs {
+            power,
+            enabled: false,
+        }
+    }
 
     pub fn apply_rotation(&self, body: &mut PhysicsBody, input: f64, _dt: f64) {
-        if !self.enabled || input.abs() < 0.01 { return; }
+        if !self.enabled || input.abs() < 0.01 {
+            return;
+        }
         body.add_torque(input * self.power);
     }
 
     pub fn apply_translation(&self, body: &mut PhysicsBody, local_dir: Vec3, _dt: f64) {
-        if !self.enabled || local_dir.length() < 0.01 { return; }
+        if !self.enabled || local_dir.length() < 0.01 {
+            return;
+        }
         let orientation = body.get_orientation_vec3();
         let mut world_force = Vec3::zero();
-        if local_dir.y > 0.0 { world_force = world_force + orientation * self.power; }
-        if local_dir.y < 0.0 { world_force = world_force - orientation * self.power; }
+        if local_dir.y > 0.0 {
+            world_force = world_force + orientation * self.power;
+        }
+        if local_dir.y < 0.0 {
+            world_force = world_force - orientation * self.power;
+        }
         let right = Vec3::new(-orientation.y, orientation.x, 0.0);
-        if local_dir.x > 0.0 { world_force = world_force + right * self.power; }
-        if local_dir.x < 0.0 { world_force = world_force - right * self.power; }
+        if local_dir.x > 0.0 {
+            world_force = world_force + right * self.power;
+        }
+        if local_dir.x < 0.0 {
+            world_force = world_force - right * self.power;
+        }
         body.add_force(world_force);
     }
 
     pub fn stabilize(&self, body: &mut PhysicsBody, _dt: f64) {
-        if !self.enabled { return; }
+        if !self.enabled {
+            return;
+        }
         let damping = 0.98;
         let av = *body.get_angular_velocity_3d();
         body.set_angular_velocity(av.z * damping);
@@ -256,17 +335,24 @@ pub struct EngineStatus {
 // =====================================================================
 #[derive(Debug, Clone)]
 pub struct StagingSystem {
-    stages: Vec<Vec<usize>>,  // stage index → part indices
+    stages: Vec<Vec<usize>>, // stage index → part indices
     current_stage: i32,
 }
 
 impl StagingSystem {
-    pub fn new() -> Self { StagingSystem { stages: Vec::new(), current_stage: -1 } }
+    pub fn new() -> Self {
+        StagingSystem {
+            stages: Vec::new(),
+            current_stage: -1,
+        }
+    }
 
     pub fn rebuild(&mut self, parts: &[Part]) {
         self.stages.clear();
         let max_stage = parts.iter().map(|p| p.stage).max().unwrap_or(-1);
-        if max_stage < 0 { return; }
+        if max_stage < 0 {
+            return;
+        }
         self.stages.resize((max_stage + 1) as usize, Vec::new());
         for (i, p) in parts.iter().enumerate() {
             if p.stage >= 0 {
@@ -277,9 +363,14 @@ impl StagingSystem {
     }
 
     pub fn activate_next_stage(&mut self, parts: &mut [Part]) -> bool {
-        if self.current_stage < 0 || self.stages.is_empty() { return false; }
+        if self.current_stage < 0 || self.stages.is_empty() {
+            return false;
+        }
         let stage = self.current_stage as usize;
-        if stage >= self.stages.len() { self.current_stage -= 1; return true; }
+        if stage >= self.stages.len() {
+            self.current_stage -= 1;
+            return true;
+        }
 
         // 激活当前级
         for &idx in &self.stages[stage] {
@@ -290,7 +381,9 @@ impl StagingSystem {
         }
 
         // 检查是否有 Decoupler → 丢弃已离散的上一级
-        let has_decoupler = self.stages[stage].iter().any(|&idx| matches!(parts[idx].kind, PartKind::Decoupler(_)));
+        let has_decoupler = self.stages[stage]
+            .iter()
+            .any(|&idx| matches!(parts[idx].kind, PartKind::Decoupler(_)));
         if has_decoupler {
             for s in (stage + 1)..self.stages.len() {
                 for &idx in &self.stages[s] {
@@ -306,7 +399,9 @@ impl StagingSystem {
         true
     }
 
-    pub fn get_current_stage(&self) -> i32 { self.current_stage }
+    pub fn get_current_stage(&self) -> i32 {
+        self.current_stage
+    }
 }
 
 // =====================================================================
@@ -331,7 +426,11 @@ pub struct DockingPort {
 impl DockingPort {
     pub fn new(name: &str, local_position: Vec3, local_direction: Vec3) -> Self {
         let len = local_direction.length();
-        let dir = if len > 0.0 { local_direction / len } else { local_direction };
+        let dir = if len > 0.0 {
+            local_direction / len
+        } else {
+            local_direction
+        };
         DockingPort {
             name: name.to_string(),
             local_position,
@@ -340,17 +439,30 @@ impl DockingPort {
         }
     }
 
-    pub fn can_initiate_soft_capture(&self, incoming_pos: Vec3, incoming_vel: Vec3, station_ang_vel: Vec3) -> bool {
-        if self.state != DockingState::Open { return false; }
+    pub fn can_initiate_soft_capture(
+        &self,
+        incoming_pos: Vec3,
+        incoming_vel: Vec3,
+        station_ang_vel: Vec3,
+    ) -> bool {
+        if self.state != DockingState::Open {
+            return false;
+        }
         let rel_vel = incoming_vel - station_ang_vel;
-        if rel_vel.length() > 0.5 { return false; }
+        if rel_vel.length() > 0.5 {
+            return false;
+        }
         let to_port = self.local_position - incoming_pos;
-        if to_port.length() > 10.0 { return false; }
+        if to_port.length() > 10.0 {
+            return false;
+        }
         true
     }
 
     pub fn initiate_soft_capture(&mut self) {
-        if self.state == DockingState::Open { self.state = DockingState::SoftCapture; }
+        if self.state == DockingState::Open {
+            self.state = DockingState::SoftCapture;
+        }
     }
 
     pub fn can_complete_hard_dock(&self, rel_velocity: f64) -> bool {
@@ -358,7 +470,9 @@ impl DockingPort {
     }
 
     pub fn complete_hard_dock(&mut self) {
-        if self.state == DockingState::SoftCapture { self.state = DockingState::HardDock; }
+        if self.state == DockingState::SoftCapture {
+            self.state = DockingState::HardDock;
+        }
     }
 
     pub fn undock(&mut self) {
@@ -405,7 +519,7 @@ impl Vessel {
             cabin_temperature: 293.15,
             cabin_pressure: 101.325,
             oxygen_level: 0.209,
-            co2_level: 0.0,
+            co2_level: 0.0004,
         }
     }
 
@@ -461,7 +575,9 @@ impl Vessel {
     /// 更新一个时间步，返回发动机状态
     pub fn update(&mut self, dt: f64, ambient_pressure: f64) -> EngineStatus {
         let mut status = EngineStatus::default();
-        if dt == 0.0 { return status; }
+        if dt == 0.0 {
+            return status;
+        }
 
         // 推进剂消耗（支持倒放：dt < 0 时逆向加注，发动机可恢复激活）
         for i in 0..self.parts.len() {
@@ -469,12 +585,17 @@ impl Vessel {
             // dt < 0: 处理有油门的发动机（即使已熄火也要逆向加注）
             let process = match &self.parts[i].kind {
                 PartKind::Engine(e) => {
-                    if dt > 0.0 { self.parts[i].is_active() && e.throttle > 0.0 }
-                    else { e.throttle > 0.0 }
+                    if dt > 0.0 {
+                        self.parts[i].is_active() && e.throttle > 0.0
+                    } else {
+                        e.throttle > 0.0
+                    }
                 }
                 _ => false,
             };
-            if !process { continue; }
+            if !process {
+                continue;
+            }
 
             // 倒放时把熄火状态一并撤销
             if dt < 0.0 && !self.parts[i].active {
@@ -495,13 +616,19 @@ impl Vessel {
             let mut ox_ok = true;
 
             for j in 0..self.parts.len() {
-                if self.parts[j].stage != self.parts[ei].stage || self.parts[j].decoupled { continue; }
+                if self.parts[j].stage != self.parts[ei].stage || self.parts[j].decoupled {
+                    continue;
+                }
                 if let PartKind::FuelTank(ref mut tank) = self.parts[j].kind {
                     if tank.propellant == engine.fuel_type {
-                        if !tank.consume_fuel(fuel_to_consume) { fuel_ok = false; }
+                        if !tank.consume_fuel(fuel_to_consume) {
+                            fuel_ok = false;
+                        }
                     }
                     if tank.propellant == engine.ox_type {
-                        if !tank.consume_fuel(ox_to_consume) { ox_ok = false; }
+                        if !tank.consume_fuel(ox_to_consume) {
+                            ox_ok = false;
+                        }
                     }
                 }
             }
@@ -513,7 +640,9 @@ impl Vessel {
         }
 
         // 总质量
-        let total_mass: f64 = self.parts.iter()
+        let total_mass: f64 = self
+            .parts
+            .iter()
             .filter(|p| !p.decoupled)
             .map(|p| p.get_mass())
             .sum();
@@ -521,7 +650,9 @@ impl Vessel {
         // 推力累计
         let mut total_thrust = Vec3::zero();
         for part in &self.parts {
-            if !part.is_active() { continue; }
+            if !part.is_active() {
+                continue;
+            }
             if let PartKind::Engine(ref e) = part.kind {
                 if e.throttle > 0.0 {
                     let thrust = e.get_thrust(ambient_pressure);
@@ -546,7 +677,8 @@ impl Vessel {
 
     /// 推进剂剩余量
     pub fn propellant_remaining(&self, stage: i32, ptype: PropellantType) -> f64 {
-        self.parts.iter()
+        self.parts
+            .iter()
             .filter(|p| p.stage == stage && !p.decoupled)
             .filter_map(|p| p.as_tank())
             .filter(|t| t.propellant == ptype)
@@ -555,7 +687,40 @@ impl Vessel {
     }
 
     pub fn get_total_damage(&self) -> f64 {
-        (self.damage_tps + self.damage_structural + self.damage_propulsion + self.damage_life_support) / 4.0
+        (self.damage_tps
+            + self.damage_structural
+            + self.damage_propulsion
+            + self.damage_life_support)
+            / 4.0
+    }
+
+    /// 单独设置 TPS 损伤
+    pub fn set_damage_tps(&mut self, val: f64) {
+        self.damage_tps = val.clamp(0.0, 1.0);
+    }
+
+    /// 单独设置结构损伤
+    pub fn set_damage_structural(&mut self, val: f64) {
+        self.damage_structural = val.clamp(0.0, 1.0);
+    }
+
+    /// 获取各分项损伤
+    pub fn get_damage_tps(&self) -> f64 {
+        self.damage_tps
+    }
+    pub fn get_damage_structural(&self) -> f64 {
+        self.damage_structural
+    }
+    pub fn get_damage_propulsion(&self) -> f64 {
+        self.damage_propulsion
+    }
+    pub fn get_damage_life_support(&self) -> f64 {
+        self.damage_life_support
+    }
+
+    /// TPS 烧蚀：按传入速率增加 TPS 损伤（rate 已含 dt 因子）
+    pub fn ablate_tps(&mut self, _dt: f64, rate: f64) {
+        self.damage_tps = (self.damage_tps + rate).min(1.0);
     }
 
     pub fn apply_damage(&mut self, amount: f64, _location: Vec3) {
@@ -571,9 +736,11 @@ impl Vessel {
         self.body.set_mass(new_mass);
 
         if self.damage_life_support > 0.0 {
-            self.oxygen_level = (self.oxygen_level - self.damage_life_support * 0.001 * dt).max(0.0);
+            self.oxygen_level =
+                (self.oxygen_level - self.damage_life_support * 0.001 * dt).max(0.0);
             self.cabin_temperature += self.damage_life_support * 0.5 * dt;
-            self.cabin_pressure = (self.cabin_pressure - self.damage_life_support * 0.01 * dt).max(0.0);
+            self.cabin_pressure =
+                (self.cabin_pressure - self.damage_life_support * 0.01 * dt).max(0.0);
         }
     }
 }
@@ -617,7 +784,7 @@ pub struct EnduranceStation {
     pub body: PhysicsBody,
     pub frame: RotatingFrame,
     pub docking_ports: Vec<DockingPort>,
-    pub modules: Vec<(StationModuleId, Vec3, f64)>,  // (id, local_pos, volume)
+    pub modules: Vec<(StationModuleId, Vec3, f64)>, // (id, local_pos, volume)
 
     pub is_docked: bool,
     pub docking_progress: f64,
@@ -633,23 +800,55 @@ impl EnduranceStation {
         let body = PhysicsBody::new(Vec3::zero(), Vec3::zero(), 50000.0, 1000000.0);
 
         let ports = vec![
-            DockingPort::new("Port 1", Vec3::new(Self::RADIUS, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)),
-            DockingPort::new("Port 2", Vec3::new(-Self::RADIUS, 0.0, 0.0), Vec3::new(-1.0, 0.0, 0.0)),
-            DockingPort::new("Port 3", Vec3::new(0.0, Self::RADIUS, 0.0), Vec3::new(0.0, 1.0, 0.0)),
-            DockingPort::new("Port 4", Vec3::new(0.0, -Self::RADIUS, 0.0), Vec3::new(0.0, -1.0, 0.0)),
+            DockingPort::new(
+                "Port 1",
+                Vec3::new(Self::RADIUS, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+            ),
+            DockingPort::new(
+                "Port 2",
+                Vec3::new(-Self::RADIUS, 0.0, 0.0),
+                Vec3::new(-1.0, 0.0, 0.0),
+            ),
+            DockingPort::new(
+                "Port 3",
+                Vec3::new(0.0, Self::RADIUS, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ),
+            DockingPort::new(
+                "Port 4",
+                Vec3::new(0.0, -Self::RADIUS, 0.0),
+                Vec3::new(0.0, -1.0, 0.0),
+            ),
         ];
 
         let r = Self::RADIUS;
         let modules = vec![
-            (StationModuleId::Bridge,    Vec3::new(r, 0.0, 0.0), 50.0),
-            (StationModuleId::Lab,       Vec3::new(0.0, r, 0.0), 80.0),
-            (StationModuleId::Mess,      Vec3::new(-r, 0.0, 0.0), 60.0),
-            (StationModuleId::Sleep,     Vec3::new(0.0, -r, 0.0), 40.0),
-            (StationModuleId::Cargo,     Vec3::new(0.0, 0.0, 5.0), 200.0),
-            (StationModuleId::Airlock1,  Vec3::new(r * 0.7071, r * 0.7071, 0.0), 10.0),
-            (StationModuleId::Airlock2,  Vec3::new(-r * 0.7071, r * 0.7071, 0.0), 10.0),
-            (StationModuleId::Airlock3,  Vec3::new(-r * 0.7071, -r * 0.7071, 0.0), 10.0),
-            (StationModuleId::Airlock4,  Vec3::new(r * 0.7071, -r * 0.7071, 0.0), 10.0),
+            (StationModuleId::Bridge, Vec3::new(r, 0.0, 0.0), 50.0),
+            (StationModuleId::Lab, Vec3::new(0.0, r, 0.0), 80.0),
+            (StationModuleId::Mess, Vec3::new(-r, 0.0, 0.0), 60.0),
+            (StationModuleId::Sleep, Vec3::new(0.0, -r, 0.0), 40.0),
+            (StationModuleId::Cargo, Vec3::new(0.0, 0.0, 5.0), 200.0),
+            (
+                StationModuleId::Airlock1,
+                Vec3::new(r * 0.7071, r * 0.7071, 0.0),
+                10.0,
+            ),
+            (
+                StationModuleId::Airlock2,
+                Vec3::new(-r * 0.7071, r * 0.7071, 0.0),
+                10.0,
+            ),
+            (
+                StationModuleId::Airlock3,
+                Vec3::new(-r * 0.7071, -r * 0.7071, 0.0),
+                10.0,
+            ),
+            (
+                StationModuleId::Airlock4,
+                Vec3::new(r * 0.7071, -r * 0.7071, 0.0),
+                10.0,
+            ),
         ];
 
         let mut station = EnduranceStation {
@@ -679,22 +878,29 @@ impl EnduranceStation {
     }
 
     pub fn get_module_local_pos(&self, id: StationModuleId) -> Vec3 {
-        self.modules.iter()
+        self.modules
+            .iter()
             .find(|(mid, _, _)| *mid == id)
             .map(|(_, p, _)| *p)
             .unwrap_or(Vec3::zero())
     }
 
     pub fn initiate_docking(&mut self, rel_velocity: f64) -> bool {
-        if self.is_docking_in_progress || self.is_docked { return false; }
-        if rel_velocity > 0.5 { return false; }
+        if self.is_docking_in_progress || self.is_docked {
+            return false;
+        }
+        if rel_velocity > 0.5 {
+            return false;
+        }
         self.is_docking_in_progress = true;
         self.docking_progress = 0.0;
         true
     }
 
     pub fn update_docking(&mut self, dt: f64) {
-        if !self.is_docking_in_progress { return; }
+        if !self.is_docking_in_progress {
+            return;
+        }
         self.docking_progress += dt * 0.1;
         if self.docking_progress >= 1.0 {
             self.is_docking_in_progress = false;
@@ -715,7 +921,16 @@ pub struct PartLibrary;
 
 impl PartLibrary {
     pub fn create_merlin1d() -> Part {
-        Part::new_engine("Merlin 1D", 470.0, 845_000.0, 282.0, 311.0, PropellantType::Rp1, PropellantType::Lox, 2.56)
+        Part::new_engine(
+            "Merlin 1D",
+            470.0,
+            845_000.0,
+            282.0,
+            311.0,
+            PropellantType::Rp1,
+            PropellantType::Lox,
+            2.56,
+        )
     }
 
     pub fn create_merlin1d_vac() -> Part {
@@ -723,31 +938,94 @@ impl PartLibrary {
         let isp_vac = 348.0;
         let isp_sl = 282.0;
         let thrust_sl = thrust_vac * (isp_sl / isp_vac);
-        Part::new_engine("Merlin 1D Vac", 490.0, thrust_sl, isp_sl, isp_vac, PropellantType::Rp1, PropellantType::Lox, 2.35)
+        Part::new_engine(
+            "Merlin 1D Vac",
+            490.0,
+            thrust_sl,
+            isp_sl,
+            isp_vac,
+            PropellantType::Rp1,
+            PropellantType::Lox,
+            2.35,
+        )
     }
 
     pub fn create_f1() -> Part {
-        Part::new_engine("F-1 Engine", 8400.0, 7_770_000.0, 263.0, 304.0, PropellantType::Rp1, PropellantType::Lox, 2.27)
+        Part::new_engine(
+            "F-1 Engine",
+            8400.0,
+            7_770_000.0,
+            263.0,
+            304.0,
+            PropellantType::Rp1,
+            PropellantType::Lox,
+            2.27,
+        )
     }
 
     pub fn create_rl10b2() -> Part {
-        Part::new_engine("RL10B-2", 301.0, 110_000.0, 200.0, 448.0, PropellantType::Lh2, PropellantType::Lox, 5.5)
+        Part::new_engine(
+            "RL10B-2",
+            301.0,
+            110_000.0,
+            200.0,
+            448.0,
+            PropellantType::Lh2,
+            PropellantType::Lox,
+            5.5,
+        )
     }
 
     pub fn create_aj10_190() -> Part {
-        Part::new_engine("AJ10-190", 112.0, 267_000.0, 319.0, 319.0, PropellantType::Mmh, PropellantType::Nto, 1.65)
+        Part::new_engine(
+            "AJ10-190",
+            112.0,
+            267_000.0,
+            319.0,
+            319.0,
+            PropellantType::Mmh,
+            PropellantType::Nto,
+            1.65,
+        )
     }
 
     pub fn create_rs25() -> Part {
-        Part::new_engine("RS-25", 3515.0, 1_860_000.0, 366.0, 452.0, PropellantType::Lh2, PropellantType::Lox, 6.0)
+        Part::new_engine(
+            "RS-25",
+            3515.0,
+            1_860_000.0,
+            366.0,
+            452.0,
+            PropellantType::Lh2,
+            PropellantType::Lox,
+            6.0,
+        )
     }
 
     pub fn create_sls_srb() -> Part {
-        Part::new_engine("SLS SRB", 75000.0, 14_679_000.0, 250.0, 280.0, PropellantType::Solid, PropellantType::Solid, 0.0)
+        Part::new_engine(
+            "SLS SRB",
+            75000.0,
+            14_679_000.0,
+            250.0,
+            280.0,
+            PropellantType::Solid,
+            PropellantType::Solid,
+            0.0,
+        )
     }
 
     pub fn create_rl10c2() -> Part {
-        Part::new_engine("RL10C-2", 301.0, 110_000.0, 200.0, 465.0, PropellantType::Lh2, PropellantType::Lox, 5.5)
+        Part::new_engine(
+            "RL10C-2",
+            301.0,
+            110_000.0,
+            200.0,
+            465.0,
+            PropellantType::Lh2,
+            PropellantType::Lox,
+            5.5,
+        )
     }
 
     pub fn create_f9_s1_rp1_tank() -> Part {
@@ -815,8 +1093,16 @@ mod tests {
 
     #[test]
     fn test_engine_part_basics() {
-        let engine = Part::new_engine("Test", 100.0, 500_000.0, 280.0, 310.0,
-                                      PropellantType::Rp1, PropellantType::Lox, 2.5);
+        let engine = Part::new_engine(
+            "Test",
+            100.0,
+            500_000.0,
+            280.0,
+            310.0,
+            PropellantType::Rp1,
+            PropellantType::Lox,
+            2.5,
+        );
         let e = engine.as_engine().unwrap();
         assert!((e.fuel_mass_fraction() - 1.0 / 3.5).abs() < 1e-6);
         assert!((e.ox_mass_fraction() - 2.5 / 3.5).abs() < 1e-6);
@@ -824,8 +1110,16 @@ mod tests {
 
     #[test]
     fn test_engine_thrust_increases_in_vacuum() {
-        let mut e = Part::new_engine("Test", 100.0, 500_000.0, 280.0, 310.0,
-                                     PropellantType::Rp1, PropellantType::Lox, 2.5);
+        let mut e = Part::new_engine(
+            "Test",
+            100.0,
+            500_000.0,
+            280.0,
+            310.0,
+            PropellantType::Rp1,
+            PropellantType::Lox,
+            2.5,
+        );
         e.active = true;
         let eng = e.as_engine_mut().unwrap();
         eng.set_throttle(1.0);
@@ -847,8 +1141,16 @@ mod tests {
 
     #[test]
     fn test_decoupled_part_has_zero_mass() {
-        let mut part = Part::new_engine("Test", 100.0, 500_000.0, 280.0, 310.0,
-                                        PropellantType::Rp1, PropellantType::Lox, 2.5);
+        let mut part = Part::new_engine(
+            "Test",
+            100.0,
+            500_000.0,
+            280.0,
+            310.0,
+            PropellantType::Rp1,
+            PropellantType::Lox,
+            2.5,
+        );
         assert!((part.get_mass() - 100.0).abs() < 1e-9);
         part.decoupled = true;
         assert!((part.get_mass() - 0.0).abs() < 1e-9);
@@ -881,7 +1183,7 @@ mod tests {
         // Stage 0 parts should be active
         assert!(vessel.parts[0].active); // eng1
         assert!(vessel.parts[1].active); // tank1
-        // Stage 1 parts should not be active yet
+                                         // Stage 1 parts should not be active yet
         assert!(!vessel.parts[2].active); // eng2
         assert!(!vessel.parts[3].active); // tank2
 
@@ -899,8 +1201,16 @@ mod tests {
     #[test]
     fn test_vessel_update_propellant_consumption() {
         let mut vessel = Vessel::new("Test");
-        let mut engine = Part::new_engine("Engine", 100.0, 100_000.0, 300.0, 320.0,
-                                          PropellantType::Rp1, PropellantType::Lox, 2.5);
+        let mut engine = Part::new_engine(
+            "Engine",
+            100.0,
+            100_000.0,
+            300.0,
+            320.0,
+            PropellantType::Rp1,
+            PropellantType::Lox,
+            2.5,
+        );
         engine.stage = 0;
         engine.active = true;
         engine.as_engine_mut().unwrap().set_throttle(1.0);
@@ -946,7 +1256,10 @@ mod tests {
     fn test_rcs_basics() {
         let rcs = Rcs::new(100.0);
         assert!(!rcs.enabled);
-        let rcs2 = Rcs { enabled: true, ..rcs };
+        let rcs2 = Rcs {
+            enabled: true,
+            ..rcs
+        };
         let mut body = PhysicsBody::new(Vec3::zero(), Vec3::zero(), 1000.0, 500.0);
         rcs2.apply_rotation(&mut body, 0.5, 0.1);
         // Should have applied torque
@@ -975,8 +1288,27 @@ mod tests {
     #[test]
     fn test_staging_system() {
         let mut parts = vec![
-            Part { stage: 0, decoupled: false, active: false, ..Part::new_engine("E1", 100.0, 1000.0, 280.0, 310.0, PropellantType::Rp1, PropellantType::Lox, 2.5) },
-            Part { stage: 1, decoupled: false, active: false, ..Part::new_fuel_tank("T1", 50.0, 100.0, PropellantType::Rp1) },
+            Part {
+                stage: 0,
+                decoupled: false,
+                active: false,
+                ..Part::new_engine(
+                    "E1",
+                    100.0,
+                    1000.0,
+                    280.0,
+                    310.0,
+                    PropellantType::Rp1,
+                    PropellantType::Lox,
+                    2.5,
+                )
+            },
+            Part {
+                stage: 1,
+                decoupled: false,
+                active: false,
+                ..Part::new_fuel_tank("T1", 50.0, 100.0, PropellantType::Rp1)
+            },
         ];
 
         let mut staging = StagingSystem::new();
@@ -1013,8 +1345,16 @@ mod tests {
 
     #[test]
     fn test_engine_mixture_ratio_validation() {
-        let engine = Part::new_engine("Test", 100.0, 500_000.0, 280.0, 310.0,
-                                      PropellantType::Lh2, PropellantType::Lox, 6.0);
+        let engine = Part::new_engine(
+            "Test",
+            100.0,
+            500_000.0,
+            280.0,
+            310.0,
+            PropellantType::Lh2,
+            PropellantType::Lox,
+            6.0,
+        );
         let e = engine.as_engine().unwrap();
         assert!((e.fuel_mass_fraction() - 1.0 / 7.0).abs() < 1e-6);
         assert!((e.ox_mass_fraction() - 6.0 / 7.0).abs() < 1e-6);
@@ -1041,5 +1381,68 @@ mod tests {
         assert!((t2.current_fuel - 90.0).abs() < 1e-9);
         assert!(t2.consume_fuel(-999.0)); // cap at capacity
         assert!((t2.current_fuel - t2.capacity).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_tps_ablation_chain() {
+        let mut v = Vessel::new("Test-Orion");
+        assert!((v.get_damage_tps() - 0.0).abs() < 1e-12);
+        assert!((v.get_damage_structural() - 0.0).abs() < 1e-12);
+        v.set_damage_tps(0.15);
+        assert!((v.get_damage_tps() - 0.15).abs() < 1e-12);
+        for _ in 0..100 {
+            v.ablate_tps(0.1, 0.016);
+        }
+        let tps = v.get_damage_tps();
+        assert!(tps > 0.25, "TPS increase after ablation: got {tps}");
+        assert!(tps <= 1.0);
+        assert!(v.get_damage_structural() < 0.01);
+        v.set_damage_tps(0.9);
+        for _ in 0..500 {
+            if v.get_damage_tps() > 0.8 && v.get_damage_structural() < 1.0 {
+                let sr = v.get_damage_tps() * 0.01 * 0.1;
+                v.set_damage_structural(v.get_damage_structural() + sr);
+            }
+        }
+        let s = v.get_damage_structural();
+        assert!(s > 0.3, "struct >30% after 50s TPS fail: got {:.4}", s);
+        assert!(s <= 1.0);
+        // 实际结构失效阈值在配置中定义（默认 0.6）——验证物理模型正确累积
+        assert!(s < 0.8, "struct should not reach 80% in this time: got {s:.4}");
+    }
+
+    #[test]
+    fn test_structural_exceeds_threshold() {
+        // 验证长时间结构损伤累积可超过 0.6 阈值
+        let mut v = Vessel::new("Test-Struct");
+        v.set_damage_tps(0.9);
+        for _ in 0..3000 {  // 3000 步 × 0.1s = 300s
+            if v.get_damage_tps() > 0.8 && v.get_damage_structural() < 1.0 {
+                let sr = v.get_damage_tps() * 0.01 * 0.1;
+                v.set_damage_structural(v.get_damage_structural() + sr);
+            }
+        }
+        let s = v.get_damage_structural();
+        assert!(s > 0.6, "struct >60% after 300s TPS fail: got {:.4}", s);
+        assert!(s <= 1.0);
+    }
+
+    #[test]
+    fn test_ablate_tps_capped() {
+        let mut v = Vessel::new("Test");
+        v.set_damage_tps(0.95);
+        for _ in 0..1000 {
+            v.ablate_tps(0.1, 0.05);
+        }
+        assert!((v.get_damage_tps() - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_damage_setters_bounds() {
+        let mut v = Vessel::new("Test");
+        v.set_damage_tps(-0.1);
+        assert!((v.get_damage_tps() - 0.0).abs() < 1e-12);
+        v.set_damage_structural(1.5);
+        assert!((v.get_damage_structural() - 1.0).abs() < 1e-12);
     }
 }

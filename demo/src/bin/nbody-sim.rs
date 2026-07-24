@@ -21,12 +21,18 @@ struct Trail {
 }
 impl Trail {
     fn new() -> Self {
-        Self { points: vec![macroquad::math::Vec3::ZERO; TRAIL_LENGTH], cursor: 0, full: false }
+        Self {
+            points: vec![macroquad::math::Vec3::ZERO; TRAIL_LENGTH],
+            cursor: 0,
+            full: false,
+        }
     }
     fn push(&mut self, pos: macroquad::math::Vec3) {
         self.points[self.cursor] = pos;
         self.cursor = (self.cursor + 1) % TRAIL_LENGTH;
-        if self.cursor == 0 { self.full = true; }
+        if self.cursor == 0 {
+            self.full = true;
+        }
     }
     fn points(&self) -> Vec<macroquad::math::Vec3> {
         if self.full {
@@ -56,13 +62,13 @@ fn body_color(name: &str) -> macroquad::color::Color {
 // 3D 可视化模式（2D 正交投影，参考 rocket-sim）
 // =====================================================================
 async fn viz_main(scene_path: String) {
-    use macroquad::prelude::*;
+    use demo::render::*;
     use macroquad::color::Color;
     use macroquad::math::Vec3;
-    use demo::render::*;
+    use macroquad::prelude::*;
 
-    let config = deepspace::scene::SceneConfig::load(&scene_path)
-        .expect("Failed to load scene config");
+    let config =
+        deepspace::scene::SceneConfig::load(&scene_path).expect("Failed to load scene config");
     println!("Scene: {} ({} bodies)", config.name, config.bodies.len());
 
     let mut runtime = deepspace::scene::SceneRuntime::new(&config);
@@ -70,8 +76,16 @@ async fn viz_main(scene_path: String) {
     let mut trails: Vec<Trail> = (0..n).map(|_| Trail::new()).collect();
 
     // 根据系统尺度自动设置相机距离
-    let max_dist = runtime.sys.bodies.iter()
-        .map(|b| (b.position.x * b.position.x + b.position.y * b.position.y + b.position.z * b.position.z).sqrt())
+    let max_dist = runtime
+        .sys
+        .bodies
+        .iter()
+        .map(|b| {
+            (b.position.x * b.position.x
+                + b.position.y * b.position.y
+                + b.position.z * b.position.z)
+                .sqrt()
+        })
         .fold(1.0e10_f64, f64::max);
     let mut camera = OrbitalCamera::new(Vec3::ZERO, (max_dist * 2.5) as f32);
     camera.max_distance = (max_dist * 50.0) as f32;
@@ -86,7 +100,9 @@ async fn viz_main(scene_path: String) {
         runtime.step();
 
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
-            if i < trails.len() { trails[i].push(to_mvec3(body.position)); }
+            if i < trails.len() {
+                trails[i].push(to_mvec3(body.position));
+            }
         }
 
         // -----------------------------------------------------------------
@@ -132,10 +148,22 @@ async fn viz_main(scene_path: String) {
         // HUD 文字
         // -----------------------------------------------------------------
         draw_text(&format!("Scene: {}", config.name), 10.0, 24.0, 20.0, WHITE);
-        draw_text(&format!("Time: {:.2e} s", runtime.sys.time), 10.0, 48.0, 18.0, LIGHTGRAY);
+        draw_text(
+            &format!("Time: {:.2e} s", runtime.sys.time),
+            10.0,
+            48.0,
+            18.0,
+            LIGHTGRAY,
+        );
         draw_text(&format!("Bodies: {n}"), 10.0, 70.0, 16.0, GRAY);
         draw_text(&format!("dt: {:.1e} s", config.dt), 10.0, 90.0, 16.0, GRAY);
-        draw_text("Left-drag: Rotate | Scroll: Zoom | ESC: Exit", 10.0, sh - 50.0, 14.0, DARKGRAY);
+        draw_text(
+            "Left-drag: Rotate | Scroll: Zoom | ESC: Exit",
+            10.0,
+            sh - 50.0,
+            14.0,
+            DARKGRAY,
+        );
 
         // 天体列表面板
         let lx = sw - 240.0;
@@ -144,7 +172,13 @@ async fn viz_main(scene_path: String) {
             let y = 48.0 + i as f32 * 20.0;
             let c = body_color(&body.name);
             draw_rectangle(lx, y - 2.0, 12.0, 12.0, c);
-            draw_text(&format!("{}  M={:.2e}kg", body.name, body.mass), lx + 16.0, y + 8.0, 14.0, LIGHTGRAY);
+            draw_text(
+                &format!("{}  M={:.2e}kg", body.name, body.mass),
+                lx + 16.0,
+                y + 8.0,
+                14.0,
+                LIGHTGRAY,
+            );
         }
 
         next_frame().await;
@@ -156,14 +190,24 @@ async fn viz_main(scene_path: String) {
 // =====================================================================
 fn headless_main(scene_path: &str, csv_path: Option<&str>, switch_file: Option<&str>) {
     match deepspace::scene::SceneConfig::load(scene_path) {
-        Err(e) => { eprintln!("[nbody-sim] error: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("[nbody-sim] error: {e}");
+            std::process::exit(1);
+        }
         Ok(config) => {
-            eprintln!("[nbody-sim] scene '{}' loaded ({} bodies)", config.name, config.bodies.len());
+            eprintln!(
+                "[nbody-sim] scene '{}' loaded ({} bodies)",
+                config.name,
+                config.bodies.len()
+            );
             let mut runtime = deepspace::scene::SceneRuntime::new(&config);
             let report_interval = (config.duration / config.dt / 100.0).max(1.0) as usize;
             match runtime.run_loop(config.duration, report_interval, csv_path, switch_file) {
                 Ok(lines) => eprintln!("[nbody-sim] complete — {lines} CSV lines"),
-                Err(e) => { eprintln!("[nbody-sim] error: {e}"); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("[nbody-sim] error: {e}");
+                    std::process::exit(1);
+                }
             }
         }
     }
@@ -183,11 +227,30 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--scene" | "-s" => { i += 1; if i < args.len() { scene_path = Some(args[i].clone()); } }
-            "--csv" | "-c" => { i += 1; if i < args.len() { csv_path = Some(args[i].clone()); } }
-            "--switch-file" | "-w" => { i += 1; if i < args.len() { switch_file = Some(args[i].clone()); } }
-            "--headless" | "-h" => { headless = true; }
-            "--help" => { print_help = true; }
+            "--scene" | "-s" => {
+                i += 1;
+                if i < args.len() {
+                    scene_path = Some(args[i].clone());
+                }
+            }
+            "--csv" | "-c" => {
+                i += 1;
+                if i < args.len() {
+                    csv_path = Some(args[i].clone());
+                }
+            }
+            "--switch-file" | "-w" => {
+                i += 1;
+                if i < args.len() {
+                    switch_file = Some(args[i].clone());
+                }
+            }
+            "--headless" | "-h" => {
+                headless = true;
+            }
+            "--help" => {
+                print_help = true;
+            }
             _ => {}
         }
         i += 1;
@@ -206,7 +269,11 @@ fn main() {
         eprintln!("  scenes/solar_system.scene  Sun + 4 inner planets");
         eprintln!("  scenes/three_body.scene    Star + 2 planets");
         eprintln!("  scenes/figure8.scene       Chenciner-Montgomery figure-8 orbit");
-        std::process::exit(if headless && scene_path.is_none() { 1 } else { 0 });
+        std::process::exit(if headless && scene_path.is_none() {
+            1
+        } else {
+            0
+        });
     }
 
     let path = scene_path.unwrap_or_else(|| "scenes/solar_system.scene".to_string());

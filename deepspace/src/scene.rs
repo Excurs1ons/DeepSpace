@@ -140,8 +140,8 @@ fn parse_sections(content: &str) -> (Vec<String>, HashMap<String, HashMap<String
 impl SceneConfig {
     /// 从 `.scene` 文件加载
     pub fn load(path: &str) -> Result<Self, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read scene file '{path}': {e}"))?;
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read scene file '{path}': {e}"))?;
         Self::parse(&content)
     }
 
@@ -190,7 +190,13 @@ impl SceneConfig {
                     .ok_or_else(|| format!("body '{body_name}' missing radius"))?;
                 let pos = parse_vec3(sec_data, "pos")?;
                 let vel = parse_vec3(sec_data, "vel")?;
-                config.bodies.push(SceneBody { name: body_name.to_string(), mass, radius, pos, vel });
+                config.bodies.push(SceneBody {
+                    name: body_name.to_string(),
+                    mass,
+                    radius,
+                    pos,
+                    vel,
+                });
             }
         }
 
@@ -266,7 +272,13 @@ impl SceneRuntime {
 
     /// 运行时添加一个天体
     pub fn add_body(&mut self, body: SceneBody) {
-        self.sys.add_body(GravBody::new(&body.name, body.mass, body.radius, body.pos, body.vel));
+        self.sys.add_body(GravBody::new(
+            &body.name,
+            body.mass,
+            body.radius,
+            body.pos,
+            body.vel,
+        ));
     }
 
     /// 运行时移除一个天体（按名称）
@@ -406,11 +418,20 @@ impl SceneRuntime {
         let mut line = String::new();
         write!(line, "{:.6e}", self.sys.time).unwrap();
         for b in &self.sys.bodies {
-            write!(line, ",{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e}",
-                b.position.x, b.position.y, b.position.z,
-                b.velocity.x, b.velocity.y, b.velocity.z).unwrap();
+            write!(
+                line,
+                ",{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e}",
+                b.position.x, b.position.y, b.position.z, b.velocity.x, b.velocity.y, b.velocity.z
+            )
+            .unwrap();
         }
-        write!(line, ",{:.6e},{:.6e}", self.sys.total_energy(), self.sys.min_distance()).unwrap();
+        write!(
+            line,
+            ",{:.6e},{:.6e}",
+            self.sys.total_energy(),
+            self.sys.min_distance()
+        )
+        .unwrap();
         writeln!(w, "{line}").map_err(|e| format!("CSV write error: {e}"))
     }
 }
@@ -566,9 +587,7 @@ mod tests {
         rt.sys.time = 0.0;
 
         let csv_path = "./test_scene_runtime_loop.csv";
-        let lines = rt
-            .run_loop(5000.0, 1, Some(csv_path), None)
-            .unwrap();
+        let lines = rt.run_loop(5000.0, 1, Some(csv_path), None).unwrap();
         assert!(lines >= 2);
 
         let content = fs::read_to_string(csv_path).unwrap();

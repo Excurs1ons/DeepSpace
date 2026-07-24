@@ -32,7 +32,7 @@ impl LengthUnit {
     pub fn to_meters(&self) -> f64 {
         match self {
             LengthUnit::Mm => 0.001,
-            LengthUnit::M  => 1.0,
+            LengthUnit::M => 1.0,
             LengthUnit::Km => 1_000.0,
             LengthUnit::Au => 149_597_870_700.0,
             LengthUnit::Ly => 9_460_730_472_580_800.0,
@@ -45,7 +45,7 @@ impl LengthUnit {
     pub fn abbrev(&self) -> &'static str {
         match self {
             LengthUnit::Mm => "mm",
-            LengthUnit::M  => "m",
+            LengthUnit::M => "m",
             LengthUnit::Km => "km",
             LengthUnit::Au => "AU",
             LengthUnit::Ly => "ly",
@@ -61,12 +61,12 @@ impl LengthUnit {
         //   1 ly  = 9.46e15 m  → [1e15, 1e18)
         //   1 kpc = 3.09e19 m  → [1e19, 1e21)
         let candidates = [
-            (0.0,     1e0,   LengthUnit::Mm),   // [0m, 1m)
-            (1e0,     1e3,   LengthUnit::M),     // [1m, 1km)
-            (1e3,     1e7,   LengthUnit::Km),    // [1km, 10,000km)
-            (1e7,     1e14,  LengthUnit::Au),    // [10Mm, 1000AU)
-            (1e14,    1e18,  LengthUnit::Ly),    // [0.01ly, 100ly)
-            (1e18,    1e22,  LengthUnit::Kpc),   // [0.03kpc, 300kpc)
+            (0.0, 1e0, LengthUnit::Mm),    // [0m, 1m)
+            (1e0, 1e3, LengthUnit::M),     // [1m, 1km)
+            (1e3, 1e7, LengthUnit::Km),    // [1km, 10,000km)
+            (1e7, 1e14, LengthUnit::Au),   // [10Mm, 1000AU)
+            (1e14, 1e18, LengthUnit::Ly),  // [0.01ly, 100ly)
+            (1e18, 1e22, LengthUnit::Kpc), // [0.03kpc, 300kpc)
         ];
         for &(lo, hi, unit) in &candidates {
             if abs >= lo && abs < hi {
@@ -144,7 +144,9 @@ pub struct Scalar {
 }
 
 impl Scalar {
-    pub fn new(value: f64, unit: LengthUnit) -> Self { Self { value, unit } }
+    pub fn new(value: f64, unit: LengthUnit) -> Self {
+        Self { value, unit }
+    }
 
     /// 转换到目标单位
     pub fn to(&self, target: LengthUnit) -> f64 {
@@ -192,22 +194,39 @@ impl FrameGraph {
     }
 
     /// 根帧 ID
-    pub fn root_id(&self) -> FrameId { FrameId::ROOT }
+    pub fn root_id(&self) -> FrameId {
+        FrameId::ROOT
+    }
 
     /// 帧数量
-    pub fn count(&self) -> usize { self.frames.len() }
+    pub fn count(&self) -> usize {
+        self.frames.len()
+    }
 
     // ---- 添加 ----
 
     /// 添加帧，返回分配的 ID
-    pub fn add_frame(&mut self, name: &str, unit: LengthUnit, parent: Option<FrameId>, origin: [f64; 3]) -> FrameId {
+    pub fn add_frame(
+        &mut self,
+        name: &str,
+        unit: LengthUnit,
+        parent: Option<FrameId>,
+        origin: [f64; 3],
+    ) -> FrameId {
         // 验证父帧存在
         if let Some(pid) = parent {
-            assert!(self.frames.iter().any(|f| f.id == pid), "parent frame {:?} not found", pid);
+            assert!(
+                self.frames.iter().any(|f| f.id == pid),
+                "parent frame {:?} not found",
+                pid
+            );
         }
         let id = FrameId(self.frames.len() as u64);
         self.frames.push(FrameNode {
-            id, name: name.to_string(), unit, parent,
+            id,
+            name: name.to_string(),
+            unit,
+            parent,
             origin_in_parent: origin,
         });
         id
@@ -221,7 +240,9 @@ impl FrameGraph {
         let mut current = id;
         loop {
             path.push(current);
-            if current == FrameId::ROOT { break; }
+            if current == FrameId::ROOT {
+                break;
+            }
             match self.get(current).and_then(|n| n.parent) {
                 Some(p) => current = p,
                 None => break,
@@ -343,7 +364,12 @@ impl FrameGraph {
     /// 构建一个标准的太阳系-银河系帧层次
     /// 返回各个关键帧的 ID
     pub fn build_standard_universe(&mut self) -> StandardFrames {
-        let lg = self.add_frame("LocalGroup", LengthUnit::Mpc, Some(FrameId::ROOT), [0.0, 0.0, 0.0]);
+        let lg = self.add_frame(
+            "LocalGroup",
+            LengthUnit::Mpc,
+            Some(FrameId::ROOT),
+            [0.0, 0.0, 0.0],
+        );
         let mw = self.add_frame("MilkyWay", LengthUnit::Kpc, Some(lg), [0.0, 0.0, 0.0]);
         // 太阳系距离银河中心 ~8 kpc
         let sol = self.add_frame("Sol", LengthUnit::Au, Some(mw), [8.0, 0.0, 0.0]);
@@ -354,7 +380,16 @@ impl FrameGraph {
         let luna = self.add_frame("Luna", LengthUnit::Km, Some(earth), [384_400.0, 0.0, 0.0]); // 384400 km
         let proxima = self.add_frame("ProximaB", LengthUnit::Au, Some(ac), [0.05, 0.0, 0.0]);
 
-        StandardFrames { lg, mw, sol, earth, mars, luna, ac, proxima }
+        StandardFrames {
+            lg,
+            mw,
+            sol,
+            earth,
+            mars,
+            luna,
+            ac,
+            proxima,
+        }
     }
 }
 
@@ -512,7 +547,12 @@ mod tests {
     #[should_panic(expected = "parent frame")]
     fn add_frame_with_invalid_parent() {
         let mut g = FrameGraph::new();
-        g.add_frame("Orphan", LengthUnit::Km, Some(FrameId(999)), [0.0, 0.0, 0.0]);
+        g.add_frame(
+            "Orphan",
+            LengthUnit::Km,
+            Some(FrameId(999)),
+            [0.0, 0.0, 0.0],
+        );
     }
 
     // ---- 帧路径测试 ----
@@ -635,7 +675,12 @@ mod tests {
     fn resolve_cross_branch() {
         let mut g = FrameGraph::new();
         let sol = g.add_frame("Sol", LengthUnit::Au, Some(FrameId::ROOT), [8.0, 0.0, 0.0]);
-        let ac = g.add_frame("AlphaCent", LengthUnit::Au, Some(FrameId::ROOT), [8.5, 0.5, 0.0]);
+        let ac = g.add_frame(
+            "AlphaCent",
+            LengthUnit::Au,
+            Some(FrameId::ROOT),
+            [8.5, 0.5, 0.0],
+        );
         let earth = g.add_frame("Earth", LengthUnit::Km, Some(sol), [1.0, 0.0, 0.0]);
         let proxima = g.add_frame("Proxima", LengthUnit::Km, Some(ac), [0.05, 0.0, 0.0]);
 
@@ -673,7 +718,12 @@ mod tests {
 
         let d = g.distance_auto(&earth, &proxima);
         // 两系统相距 ~0.707 kpc
-        assert!(d.unit == LengthUnit::Kpc || d.unit == LengthUnit::Ly, "got {:?} {}", d.unit, d.value);
+        assert!(
+            d.unit == LengthUnit::Kpc || d.unit == LengthUnit::Ly,
+            "got {:?} {}",
+            d.unit,
+            d.value
+        );
         assert!((d.value - 0.707).abs() < 0.005, "value={}", d.value);
     }
 
@@ -760,7 +810,12 @@ mod tests {
 
         let d = g.distance_auto(&sol_pos, &ac_pos);
         // 在 MW 帧中相距 sqrt(0.5² + 0.5²) = 0.707 kpc
-        assert!(d.unit == LengthUnit::Kpc || d.unit == LengthUnit::Ly, "got {:?} {}", d.unit, d.value);
+        assert!(
+            d.unit == LengthUnit::Kpc || d.unit == LengthUnit::Ly,
+            "got {:?} {}",
+            d.unit,
+            d.value
+        );
         assert!((d.value - 0.707).abs() < 0.01, "value={}", d.value);
     }
 
@@ -851,7 +906,7 @@ mod tests {
 
         // 验证所有距离为正且对称
         for i in 0..entities.len() {
-            for j in i+1..entities.len() {
+            for j in i + 1..entities.len() {
                 let d_ij = g.distance_auto(&entities[i].1, &entities[j].1);
                 let d_ji = g.distance_auto(&entities[j].1, &entities[i].1);
                 assert!(d_ij.value > 0.0);
@@ -876,18 +931,36 @@ mod tests {
         // 10 级帧深度，验证往返一致
         let mut g = FrameGraph::new();
         let mut prev = FrameId::ROOT;
-        let units = [LengthUnit::Kpc, LengthUnit::Ly, LengthUnit::Au, LengthUnit::Km, LengthUnit::M,
-                        LengthUnit::Km, LengthUnit::Au, LengthUnit::Ly, LengthUnit::Kpc, LengthUnit::Mpc];
+        let units = [
+            LengthUnit::Kpc,
+            LengthUnit::Ly,
+            LengthUnit::Au,
+            LengthUnit::Km,
+            LengthUnit::M,
+            LengthUnit::Km,
+            LengthUnit::Au,
+            LengthUnit::Ly,
+            LengthUnit::Kpc,
+            LengthUnit::Mpc,
+        ];
         let mut ids = Vec::new();
         for (i, &u) in units.iter().enumerate() {
-            let id = g.add_frame(&format!("Level{}", i), u, Some(prev), [1.0 * (i as f64), 0.0, 0.0]);
+            let id = g.add_frame(
+                &format!("Level{}", i),
+                u,
+                Some(prev),
+                [1.0 * (i as f64), 0.0, 0.0],
+            );
             ids.push(id);
             prev = id;
         }
 
         let ship = EntityPosition::new(prev, 42.0, -3.0, 7.0);
         let in_root = g.resolve(&ship, FrameId::ROOT);
-        let back = g.resolve(&EntityPosition::new(FrameId::ROOT, in_root[0], in_root[1], in_root[2]), prev);
+        let back = g.resolve(
+            &EntityPosition::new(FrameId::ROOT, in_root[0], in_root[1], in_root[2]),
+            prev,
+        );
         assert!((back[0] - 42.0).abs() < 1e-8);
         assert!((back[1] + 3.0).abs() < 1e-8);
         assert!((back[2] - 7.0).abs() < 1e-8);
@@ -928,7 +1001,12 @@ mod tests {
         let earth = g.add_frame("Earth", LengthUnit::Km, Some(sol), [1.0, 0.0, 0.0]);
 
         // 三体星系 (比邻星/Alpha Centauri): 距太阳 4.37 ly
-        let ac = g.add_frame("AlphaCentauri", LengthUnit::Au, Some(sol_local), [4.37, 0.0, 0.0]);
+        let ac = g.add_frame(
+            "AlphaCentauri",
+            LengthUnit::Au,
+            Some(sol_local),
+            [4.37, 0.0, 0.0],
+        );
         // 三体空间站: 距比邻星 0.05 AU (与比邻星 b 轨道类似)
         let trisolaris = g.add_frame("Trisolaris", LengthUnit::Km, Some(ac), [0.05, 0.0, 0.0]);
 
@@ -952,10 +1030,16 @@ mod tests {
         let d = g.distance_auto(&ye_wenjie, &trisolaran);
 
         // 距离应在光年量级 (~4.37 ly)
-        assert_eq!(d.unit, LengthUnit::Ly, "auto unit should be ly, got {:?}", d.unit);
+        assert_eq!(
+            d.unit,
+            LengthUnit::Ly,
+            "auto unit should be ly, got {:?}",
+            d.unit
+        );
         assert!(
             (d.value - 4.37).abs() < 0.05,
-            "distance should be ~4.37 ly, got {}", d.value
+            "distance should be ~4.37 ly, got {}",
+            d.value
         );
 
         // ---- 计算光速往返时间 ----
@@ -967,8 +1051,7 @@ mod tests {
         // 实际比邻星距离 4.37 ly → 往返 8.74 年
         println!(
             "  叶文杰 → 三体星系: {:.4} ly ({:.2e} km)",
-            d.value,
-            dist_km
+            d.value, dist_km
         );
         println!(
             "  电磁波往返时间: {:.2} 年 ({:.2e} 秒)",
@@ -981,7 +1064,8 @@ mod tests {
 
         assert!(
             (round_trip_years - 8.74).abs() < 0.1,
-            "round trip should be ~8.74 years, got {:.4}", round_trip_years
+            "round trip should be ~8.74 years, got {:.4}",
+            round_trip_years
         );
         // 往返时间为正且合理
         assert!(round_trip_years > 8.0);
@@ -990,13 +1074,22 @@ mod tests {
         // ---- 额外验证: 缩放后的距离应该合理 ----
         let d_au = Scalar::new(d.value, d.unit).to(LengthUnit::Au);
         // 4.37 ly ≈ 276,000 AU
-        assert!((d_au - 276_000.0).abs() / 276_000.0 < 0.02, "au distance off: {}", d_au);
+        assert!(
+            (d_au - 276_000.0).abs() / 276_000.0 < 0.02,
+            "au distance off: {}",
+            d_au
+        );
 
         // ---- 跨帧解析的一致性 ----
         // 把叶文杰位置解析到三体帧, 再解析回来, 应该一致
         let ye_in_trisolaris = g.resolve(&ye_wenjie, trisolaris);
         let ye_back = g.resolve(
-            &EntityPosition::new(trisolaris, ye_in_trisolaris[0], ye_in_trisolaris[1], ye_in_trisolaris[2]),
+            &EntityPosition::new(
+                trisolaris,
+                ye_in_trisolaris[0],
+                ye_in_trisolaris[1],
+                ye_in_trisolaris[2],
+            ),
             earth,
         );
         let dx = (ye_back[0] - ye_x).abs();

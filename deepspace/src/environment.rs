@@ -11,11 +11,17 @@ pub struct Atmosphere {
     scale_height: f64,
 }
 
-struct LayerState { pressure_pa: f64, temperature_k: f64 }
+struct LayerState {
+    pressure_pa: f64,
+    temperature_k: f64,
+}
 
 impl Atmosphere {
     pub fn new(sea_level_pressure: f64, scale_height: f64) -> Self {
-        Self { sea_level_pressure, scale_height }
+        Self {
+            sea_level_pressure,
+            scale_height,
+        }
     }
 
     pub fn get_pressure(&self, altitude: f64) -> f64 {
@@ -26,7 +32,11 @@ impl Atmosphere {
     pub fn get_density(&self, altitude: f64) -> f64 {
         let h = altitude.max(0.0);
         let s = self.evaluate_isa(h);
-        if s.temperature_k <= 0.0 { 0.0 } else { (s.pressure_pa / (crate::AIR_GAS_CONSTANT * s.temperature_k)).max(0.0) }
+        if s.temperature_k <= 0.0 {
+            0.0
+        } else {
+            (s.pressure_pa / (crate::AIR_GAS_CONSTANT * s.temperature_k)).max(0.0)
+        }
     }
 
     pub fn get_temperature(&self, altitude: f64) -> f64 {
@@ -35,7 +45,11 @@ impl Atmosphere {
 
     pub fn get_speed_of_sound(&self, altitude: f64) -> f64 {
         let tk = self.get_temperature(altitude);
-        if tk <= 0.0 { 0.0 } else { (crate::GAMMA_AIR * crate::AIR_GAS_CONSTANT * tk).sqrt() }
+        if tk <= 0.0 {
+            0.0
+        } else {
+            (crate::GAMMA_AIR * crate::AIR_GAS_CONSTANT * tk).sqrt()
+        }
     }
 
     fn evaluate_isa(&self, altitude: f64) -> LayerState {
@@ -46,24 +60,30 @@ impl Atmosphere {
 
         // [hBase, hTop, tBase, pBase, lapse]
         const LAYERS: [(f64, f64, f64, f64, f64); 7] = [
-            (0.0,     11000.0, 288.15, 101325.0,  -0.0065),
-            (11000.0, 20000.0, 216.65, 22632.06,   0.0),
-            (20000.0, 32000.0, 216.65, 5474.889,   0.001),
-            (32000.0, 47000.0, 228.65, 868.0187,   0.0028),
-            (47000.0, 51000.0, 270.65, 110.9063,   0.0),
-            (51000.0, 71000.0, 270.65, 66.93887,  -0.0028),
-            (71000.0, 84852.0, 214.65, 3.956420,  -0.002),
+            (0.0, 11000.0, 288.15, 101325.0, -0.0065),
+            (11000.0, 20000.0, 216.65, 22632.06, 0.0),
+            (20000.0, 32000.0, 216.65, 5474.889, 0.001),
+            (32000.0, 47000.0, 228.65, 868.0187, 0.0028),
+            (47000.0, 51000.0, 270.65, 110.9063, 0.0),
+            (51000.0, 71000.0, 270.65, 66.93887, -0.0028),
+            (71000.0, 84852.0, 214.65, 3.956420, -0.002),
         ];
 
         for &(hb, ht, tb, pb, lapse) in LAYERS.iter() {
             if altitude <= ht {
                 let dh = altitude - hb;
                 if lapse.abs() < 1e-12 {
-                    return LayerState { pressure_pa: pb * (-(EXP_SCALE * dh) / tb).exp(), temperature_k: tb };
+                    return LayerState {
+                        pressure_pa: pb * (-(EXP_SCALE * dh) / tb).exp(),
+                        temperature_k: tb,
+                    };
                 }
                 let temp = tb + lapse * dh;
                 let press = pb * (tb / temp).powf(EXP_SCALE / lapse);
-                return LayerState { pressure_pa: press, temperature_k: temp };
+                return LayerState {
+                    pressure_pa: press,
+                    temperature_k: temp,
+                };
             }
         }
         // 外逸层延伸
@@ -71,7 +91,10 @@ impl Atmosphere {
         const T_TOP: f64 = 186.946;
         const P_TOP: f64 = 0.3734;
         let dh = altitude - H_TOP;
-        LayerState { pressure_pa: P_TOP * (-(EXP_SCALE * dh) / T_TOP).exp(), temperature_k: T_TOP }
+        LayerState {
+            pressure_pa: P_TOP * (-(EXP_SCALE * dh) / T_TOP).exp(),
+            temperature_k: T_TOP,
+        }
     }
 }
 
@@ -87,12 +110,19 @@ pub struct Planet {
 
 impl Planet {
     pub fn new(name: &str, mass: f64, radius: f64, atmosphere: Atmosphere) -> Self {
-        Self { name: name.to_string(), mass, radius, atmosphere }
+        Self {
+            name: name.to_string(),
+            mass,
+            radius,
+            atmosphere,
+        }
     }
 
     pub fn get_gravity_at(&self, position: Vec3) -> Vec3 {
         let r = position.length();
-        if r == 0.0 { return Vec3::zero(); }
+        if r == 0.0 {
+            return Vec3::zero();
+        }
         let g_mag = G * self.mass / (r * r);
         position.normalized() * (-g_mag)
     }
@@ -101,10 +131,18 @@ impl Planet {
         position.length() - self.radius
     }
 
-    pub fn get_atmosphere(&self) -> &Atmosphere { &self.atmosphere }
-    pub fn get_radius(&self) -> f64 { self.radius }
-    pub fn get_mass(&self) -> f64 { self.mass }
-    pub fn get_name(&self) -> &str { &self.name }
+    pub fn get_atmosphere(&self) -> &Atmosphere {
+        &self.atmosphere
+    }
+    pub fn get_radius(&self) -> f64 {
+        self.radius
+    }
+    pub fn get_mass(&self) -> f64 {
+        self.mass
+    }
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
 }
 
 // =====================================================================
@@ -145,7 +183,11 @@ impl DamageComponent {
     }
 
     pub fn total_damage(&self) -> f64 {
-        (self.damage_tps + self.damage_structural + self.damage_propulsion + self.damage_life_support).min(1.0)
+        (self.damage_tps
+            + self.damage_structural
+            + self.damage_propulsion
+            + self.damage_life_support)
+            .min(1.0)
     }
 
     pub fn vessel_health(&self) -> f64 {
@@ -178,37 +220,92 @@ impl DamageSystem {
 
     pub fn survival_probability(damage: &DamageComponent) -> f64 {
         let d = damage.total_damage();
-        if d > 0.8 { return 0.0; }
-        if d > 0.6 { return (0.8 - d) / 0.2; }
+        if d > 0.8 {
+            return 0.0;
+        }
+        if d > 0.6 {
+            return (0.8 - d) / 0.2;
+        }
         1.0 - d * 0.5
     }
 }
 
 // =====================================================================
-// 热模拟（简化版）
+// 热模拟（含烧蚀损伤）
 // =====================================================================
 pub struct ThermalSimulation {
     heat_flux: f64,
     total_heat: f64,
     peak_heat_flux: f64,
+    tps_ablation: f64, // 累积 TPS 烧蚀量 [0..1]
+    stagnation_pressure: f64,
+    config: crate::simulation::ThermalConfig,
 }
 
 impl ThermalSimulation {
-    pub fn new() -> Self { Self { heat_flux: 0.0, total_heat: 0.0, peak_heat_flux: 0.0 } }
+    pub fn new(config: crate::simulation::ThermalConfig) -> Self {
+        Self {
+            heat_flux: 0.0,
+            total_heat: 0.0,
+            peak_heat_flux: 0.0,
+            tps_ablation: 0.0,
+            stagnation_pressure: 0.0,
+            config,
+        }
+    }
 
+    /// 更新热通量，使用 Sutton-Graves 驻点加热公式
     pub fn update(&mut self, dt: f64, speed: f64, density: f64, integrity: f64) {
-        // 简化 aero heating: q = 0.5 * rho * v^3 * C_H
-        let c_h = 1.0e-5 * (1.0 + (1.0 - integrity).max(0.0));
-        self.heat_flux = 0.5 * density * speed.powi(3) * c_h;
+        // Sutton-Graves q = k * sqrt(rho/R_nose) * v^3
+        let q_sg = self.config.sutton_graves_k * (density / self.config.nose_radius_m).sqrt() * speed.powi(3);
+
+        // 结合 integrity（TPS 损伤越严重，热流倍数效应越强）
+        let c_h = self.config.convection_coefficient * (1.0 + self.config.damage_heat_multiplier * (1.0 - integrity).max(0.0));
+        let q_simple = 0.5 * density * speed.powi(3) * c_h;
+
+        self.heat_flux = q_sg.max(q_simple).max(0.0);
         self.total_heat += self.heat_flux * dt;
+
+        // 驻点压力
+        self.stagnation_pressure = 0.5 * density * speed * speed;
+
         if self.heat_flux > self.peak_heat_flux {
             self.peak_heat_flux = self.heat_flux;
         }
     }
 
-    pub fn get_heat_flux(&self) -> f64 { self.heat_flux }
-    pub fn get_total_heat(&self) -> f64 { self.total_heat }
-    pub fn get_peak_heat_flux(&self) -> f64 { self.peak_heat_flux }
+    /// TPS 烧蚀模型：当热流超过阈值时，TPS 逐渐烧蚀
+    pub fn ablate(&mut self, dt: f64, threshold: f64) -> f64 {
+        let excess = self.heat_flux - threshold;
+        if excess > 0.0 {
+            // 烧蚀率：超出阈值越多，烧蚀越快
+            // 约在 500 kW/m² 时 0.033/s（默认 ablation_rate_coefficient=6.67e-8）
+            let rate = excess * self.config.ablation_rate_coefficient;
+            self.tps_ablation = (self.tps_ablation + rate * dt).min(1.0);
+            rate * dt
+        } else {
+            0.0
+        }
+    }
+
+    pub fn get_heat_flux(&self) -> f64 {
+        self.heat_flux
+    }
+    pub fn get_total_heat(&self) -> f64 {
+        self.total_heat
+    }
+    pub fn get_peak_heat_flux(&self) -> f64 {
+        self.peak_heat_flux
+    }
+    pub fn get_tps_ablation(&self) -> f64 {
+        self.tps_ablation
+    }
+    pub fn get_stagnation_pressure(&self) -> f64 {
+        self.stagnation_pressure
+    }
+    pub fn reset_ablation(&mut self) {
+        self.tps_ablation = 0.0;
+    }
 }
 
 #[cfg(test)]
@@ -312,7 +409,7 @@ mod tests {
 
     #[test]
     fn thermal_simulation() {
-        let mut t = ThermalSimulation::new();
+        let mut t = ThermalSimulation::new(crate::simulation::ThermalConfig::default());
         assert!((t.get_heat_flux() - 0.0).abs() < 1e-12);
         t.update(1.0, 7800.0, 1.2, 1.0);
         // 高超声速再入应有显著热流
@@ -323,7 +420,7 @@ mod tests {
 
     #[test]
     fn thermal_peak_tracking() {
-        let mut t = ThermalSimulation::new();
+        let mut t = ThermalSimulation::new(crate::simulation::ThermalConfig::default());
         t.update(1.0, 100.0, 1.0, 1.0);
         let peak1 = t.get_peak_heat_flux();
         t.update(1.0, 1000.0, 1.0, 1.0);
