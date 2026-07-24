@@ -850,6 +850,18 @@ pub struct MissionControl {
     pub coast_start_time: f64,
     pub icps_ignited: bool,
     pub icps_ignition_time: f64,
+
+    // ---- 后轨道阶段（TLI / 跨月 / 返回） ----
+    /// TLI 燃烧已开始（ICPS 再次点火）
+    pub tli_started: bool,
+    /// TLI 点火时刻
+    pub tli_ignition_time: f64,
+    /// TLI 燃烧完成（远地点已推至月球距离）
+    pub tli_complete: bool,
+    /// 跨月滑行开始时间
+    pub translunar_start_time: f64,
+    /// 离轨脉冲已施加（返程时用于降低近地点）
+    pub deorbit_applied: bool,
 }
 
 impl MissionControl {
@@ -874,6 +886,11 @@ impl MissionControl {
             coast_start_time: 0.0,
             icps_ignited: false,
             icps_ignition_time: 0.0,
+            tli_started: false,
+            tli_ignition_time: 0.0,
+            tli_complete: false,
+            translunar_start_time: 0.0,
+            deorbit_applied: false,
         }
     }
 
@@ -898,6 +915,11 @@ impl MissionControl {
         self.coast_start_time = 0.0;
         self.icps_ignited = false;
         self.icps_ignition_time = 0.0;
+        self.tli_started = false;
+        self.tli_ignition_time = 0.0;
+        self.tli_complete = false;
+        self.translunar_start_time = 0.0;
+        self.deorbit_applied = false;
     }
 
     pub fn update(&mut self, dt: f64, engine_status: &EngineStatus, vessel: &mut Vessel, earth: &Planet) {
@@ -983,6 +1005,34 @@ impl MissionControl {
             }
         }
 
+        // ── 阶段 3：TLI (Trans-Lunar Injection) ──
+        // 圆化完成后 ICPS 再次点火，将远地点推至月球距离
+        if self.cutoff_fired && !self.tli_complete && self.current_phase == MissionPhase::Tei {
+            if !self.tli_started {
+                self.tli_started = true;
+                self.tli_ignition_time = self.mission_time;
+                let active_stage = vessel.current_stage;
+                vessel.set_stage_throttle(active_stage, 1.0);
+                eprintln!("  T+ {:7.1}s  TLI Ignition", self.mission_time);
+            } else {
+                let pos = *vessel.body.get_position();
+                let vel = *vessel.body.get_velocity();
+                let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
+                let apoapsis_alt = oe.semi_major_axis * (1.0 + oe.eccentricity) - earth.get_radius();
+                let burn_duration = self.mission_time - self.tli_ignition_time;
+
+                // 远地点达月球距离（~400,000 km）或推进剂耗尽／超时后断油
+                if apoapsis_alt > 400_000_000.0 || burn_duration > 1800.0 {
+                    let stage = vessel.current_stage;
+                    vessel.set_stage_throttle(stage, 0.0);
+                    self.tli_complete = true;
+                    self.translunar_start_time = self.mission_time;
+                    eprintln!("  T+ {:7.1}s  TLI Complete (ap={:.0}km, dur={:.0}s)",
+                        self.mission_time, apoapsis_alt/1000.0, burn_duration);
+                }
+            }
+        }
+
         self.check_exit_conditions(vessel, earth);
     }
 
@@ -1003,6 +1053,32 @@ impl MissionControl {
             }
             MissionPhase::MaxQ if velocity > orbital_vel * 0.95 => {
                 self.set_phase(MissionPhase::Orbit);
+            }
+            // 圆化完成 → 停泊轨道等待 → TLI 点火
+            MissionPhase::Orbit if self.cutoff_fired && !self.tli_started && self.mission_time > self.icps_ignition_time + 800.0 => {
+                self.set_phase(MissionPhase::Tei);
+                eprintln!("  T+ {:7.1}s  Phase → TLI", self.mission_time);
+            }
+            // TLI 完成 → 跨月滑行
+            MissionPhase::Tei if self.tli_complete => {
+                self.set_phase(MissionPhase::Translunar);
+                eprintln!("  T+ {:7.1}s  Phase → TRANSLUNAR", self.mission_time);
+            }
+            // 跨月滑行足够久（月飞越后）→ 任务事件阶段
+            MissionPhase::Translunar if self.mission_time > self.translunar_start_time + 200_000.0 => {
+                self.set_phase(MissionPhase::MissionEvents);
+                eprintln!("  T+ {:7.1}s  Phase → MISSION_EVENTS (lunar flyby complete)", self.mission_time);
+            }
+            // 返程再入
+            MissionPhase::MissionEvents if altitude < 120_000.0 && self.mission_time > 600_000.0 => {
+                self.set_phase(MissionPhase::Reentry);
+                eprintln!("  T+ {:7.1}s  Phase → REENTRY", self.mission_time);
+            }
+            // 着陆/溅落
+            MissionPhase::Reentry if altitude < 1000.0 || self.mission_time > 950_000.0 => {
+                self.set_phase(MissionPhase::Success);
+                self.outcome = MissionOutcome::Success;
+                eprintln!("  T+ {:7.1}s  Phase → SUCCESS — Mission Complete!", self.mission_time);
             }
             _ => {}
         }

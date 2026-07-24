@@ -207,43 +207,54 @@ async fn viz_main(args: CliArgs) {
         let tel = &mc.telemetry;
 
         // 阶段索引：Artemis II 全任务 10 个阶段
+        // 优先使用 MissionControl.current_phase，回退到状态启发式
         let phase_idx: Option<usize> = {
-            let p = mc.current_phase;
             use deepspace::simulation::MissionPhase::*;
-            let early = match p {
-                PreLaunch => Some(0),
-                Launch => Some(1),
-                Ascent | MaxQ => Some(2),
-                _ => None,
+            let p = mc.current_phase;
+
+            // 直接映射已知阶段（MissionEvents 返回 None 走启发式）
+            let direct = match p {
+                PreLaunch => Some(0),                    // PRE_LAUNCH
+                Launch => Some(1),                       // LAUNCH
+                Ascent | MaxQ => Some(2),                // ASCENT
+                Orbit | Staging | Coast | Circularization => Some(3), // ORBIT
+                Tei => Some(4),                          // TLI
+                Translunar => Some(5),                   // TRANSLUNAR
+                Reentry => Some(8),                      // REENTRY
+                Success | Failure | Abort => Some(9),    // SUCCESS
+                MissionEvents => None,                   // 需要启发式
             };
-            early.or_else(|| {
-                if app.mission_complete {
-                    // 任务结束映射到 SUCCESS（索引 9）
-                    return Some(9);
-                }
-                let apo = tel.orbit.apoapsis_m;
-                let alt = tel.altitude_m;
-                if apo > 400_000_000.0 {
-                    // 跨月轨道
-                    if app.simulation_time > 350_000.0 {
-                        // 回程
-                        if alt < 200_000.0 { Some(8) }    // REENTRY
-                        else { Some(7) }                    // RETURN
+
+            // 有直接映射且非 Translunar/MissionEvents → 直接返回
+            if let Some(_idx) = direct {
+                if p == Translunar || p == MissionEvents {
+                    // Translunar/MissionEvents 下用时间细分
+                    let alt = tel.altitude_m;
+                    if app.simulation_time > 300_000.0 {
+                        if alt < 200_000.0 { Some(8) }      // REENTRY
+                        else { Some(7) }                     // RETURN
                     } else if app.simulation_time > 150_000.0 {
                         Some(6)                              // LUNAR_FLYBY
-                    } else if mc.coasting && mc.icps_ignited {
-                        Some(5)                              // TRANSLUNAR
                     } else {
-                        Some(4)                              // TLI
+                        Some(5)                              // TRANSLUNAR
                     }
-                } else if tel.orbit.is_bound {
-                    let in_tli_burn = mc.icps_ignited && !mc.coasting && app.simulation_time > 6000.0;
-                    if in_tli_burn { Some(4) }              // TLI
-                    else { Some(3) }                         // ORBIT
                 } else {
-                    Some(3)                                  // ORBIT (suborbital but above ascent)
+                    direct
                 }
-            })
+            } else {
+                // MissionEvents / 兜底启发式
+                let alt = tel.altitude_m;
+                if app.mission_complete {
+                    Some(9)
+                } else if app.simulation_time > 300_000.0 {
+                    if alt < 200_000.0 { Some(8) }
+                    else { Some(7) }
+                } else if app.simulation_time > 150_000.0 {
+                    Some(6)
+                } else {
+                    Some(7)
+                }
+            }
         };
 
         // 任务里程碑进度（12 步）

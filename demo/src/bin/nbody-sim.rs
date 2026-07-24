@@ -53,7 +53,7 @@ fn body_color(name: &str) -> macroquad::color::Color {
 }
 
 // =====================================================================
-// 3D 可视化模式
+// 3D 可视化模式（2D 正交投影，参考 rocket-sim）
 // =====================================================================
 async fn viz_main(scene_path: String) {
     use macroquad::prelude::*;
@@ -68,42 +68,83 @@ async fn viz_main(scene_path: String) {
     let mut runtime = deepspace::scene::SceneRuntime::new(&config);
     let n = runtime.sys.bodies.len();
     let mut trails: Vec<Trail> = (0..n).map(|_| Trail::new()).collect();
-    let mut camera = OrbitalCamera::new(Vec3::ZERO, 5.0e11);
+
+    // 根据系统尺度自动设置相机距离
+    let max_dist = runtime.sys.bodies.iter()
+        .map(|b| (b.position.x * b.position.x + b.position.y * b.position.y + b.position.z * b.position.z).sqrt())
+        .fold(1.0e10_f64, f64::max);
+    let mut camera = OrbitalCamera::new(Vec3::ZERO, (max_dist * 2.5) as f32);
+    camera.max_distance = (max_dist * 50.0) as f32;
+    camera.min_distance = (max_dist * 0.01) as f32;
 
     loop {
         camera.update();
+        if is_key_down(KeyCode::Escape) {
+            break;
+        }
+
         runtime.step();
 
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
             if i < trails.len() { trails[i].push(to_mvec3(body.position)); }
         }
 
-        camera.set();
+        // -----------------------------------------------------------------
+        // 2D 正交投影渲染（不使用 3D 管线，避免天文尺度下 f32 精度问题）
+        // -----------------------------------------------------------------
+        let sw = screen_width();
+        let sh = screen_height();
+
+        // 绘制轨道尾迹
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
-            let pos = to_mvec3(body.position);
-            let radius = (body.radius as f32).max(1.0);
-            draw_planet(pos, radius, body_color(&body.name));
             if i < trails.len() {
                 let pts = trails[i].points();
-                if pts.len() > 1 { draw_path(&pts, Color::new(0.5, 0.5, 0.6, 0.3)); }
+                if pts.len() > 1 {
+                    let c = body_color(&body.name);
+                    let trail_color = Color::new(c.r * 0.6, c.g * 0.6, c.b * 0.6, 0.4);
+                    draw_path_2d(&camera, &pts, sw, sh, trail_color);
+                }
             }
         }
 
-        OrbitalCamera::set_default();
+        // 绘制天体（2D 圆 + 标签）
+        for body in runtime.sys.bodies.iter() {
+            let pos = to_mvec3(body.position);
+            let (cx, cy) = camera.project_2d(pos, sw, sh);
+            // 天体半径投影到像素，最小 3px 保证可见
+            let r_px = camera.len_to_px(body.radius as f32, sw, sh).max(3.0);
+            let color = body_color(&body.name);
+
+            // 填充圆（用多层同心圆模拟填充）
+            draw_circle_2d(cx, cy, r_px, color);
+            if r_px > 4.0 {
+                draw_circle_2d(cx, cy, r_px * 0.7, color);
+                draw_circle_2d(cx, cy, r_px * 0.4, color);
+            }
+            // 中心点
+            draw_line(cx - 1.0, cy, cx + 1.0, cy, 2.0, color);
+
+            // 名称标签
+            draw_text(&body.name, cx + r_px + 4.0, cy + 4.0, 14.0, color);
+        }
+
+        // -----------------------------------------------------------------
+        // HUD 文字
+        // -----------------------------------------------------------------
         draw_text(&format!("Scene: {}", config.name), 10.0, 24.0, 20.0, WHITE);
         draw_text(&format!("Time: {:.2e} s", runtime.sys.time), 10.0, 48.0, 18.0, LIGHTGRAY);
         draw_text(&format!("Bodies: {n}"), 10.0, 70.0, 16.0, GRAY);
         draw_text(&format!("dt: {:.1e} s", config.dt), 10.0, 90.0, 16.0, GRAY);
-        draw_text("Left-drag: Rotate | Scroll: Zoom | ESC: Exit", 10.0, screen_height()-50.0, 14.0, DARKGRAY);
+        draw_text("Left-drag: Rotate | Scroll: Zoom | ESC: Exit", 10.0, sh - 50.0, 14.0, DARKGRAY);
 
-        // 天体列表
-        let lx = screen_width() - 220.0;
+        // 天体列表面板
+        let lx = sw - 240.0;
         draw_text("Celestial Bodies", lx, 24.0, 18.0, WHITE);
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
-            let y = 48.0 + i as f32 * 18.0;
+            let y = 48.0 + i as f32 * 20.0;
             let c = body_color(&body.name);
-            draw_rectangle(lx, y-2.0, 12.0, 12.0, c);
-            draw_text(&format!("{}  M={:.2e}kg", body.name, body.mass), lx+16.0, y+8.0, 14.0, LIGHTGRAY);
+            draw_rectangle(lx, y - 2.0, 12.0, 12.0, c);
+            draw_text(&format!("{}  M={:.2e}kg", body.name, body.mass), lx + 16.0, y + 8.0, 14.0, LIGHTGRAY);
         }
 
         next_frame().await;
