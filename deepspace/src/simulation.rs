@@ -154,6 +154,25 @@ impl TriggerCondition {
     }
 }
 
+/// 单个条件向下一阶段的逼近进度
+#[derive(Debug, Clone)]
+pub struct ConditionProgress {
+    pub label: String,   // 短标签 "alt↑", "vel", "T+", "v/v₀", "Q"
+    pub current: f64,    // 当前测量值
+    pub target: f64,     // 目标阈值
+    pub progress: f64,   // 0.0~1.0+ (≥1.0 表示已满足)
+    pub is_met: bool,
+    pub is_boolean: bool, // 纯布尔条件（MaxQ peak / cutoff fired）
+}
+
+/// 下一阶段及进度信息
+#[derive(Debug, Clone)]
+pub struct NextPhaseInfo {
+    pub next_phase: String,
+    pub conditions: Vec<ConditionProgress>,
+    pub require_all: bool,
+}
+
 // =====================================================================
 // 命令类型
 // =====================================================================
@@ -570,8 +589,37 @@ impl EventTriggerSystem {
 // =====================================================================
 // MissionConfig — INI 解析器
 // =====================================================================
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
+
+/// 天体定义（由 mission config [body.Name] 节解析而来）
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BodyDef {
+    pub name: String,
+    pub mass: f64,
+    pub radius: f64,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    /// 海平面气压 (Pa)，0 = 无大气
+    pub sea_level_pressure: f64,
+    /// 大气标高 (m)
+    pub scale_height: f64,
+}
+
+impl Default for BodyDef {
+    fn default() -> Self {
+        BodyDef {
+            name: String::new(),
+            mass: 0.0,
+            radius: 0.0,
+            pos: Vec3::zero(),
+            vel: Vec3::zero(),
+            sea_level_pressure: 0.0,
+            scale_height: 8_500.0,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -624,6 +672,9 @@ pub struct MissionConfig {
 
     // 任务脚本（阶段转换 + 事件）
     pub script: MissionScript,
+
+    // 天体定义（[body.Name] 节）
+    pub bodies: Vec<BodyDef>,
 }
 
 impl Default for MissionConfig {
@@ -659,6 +710,7 @@ impl Default for MissionConfig {
             thermal: ThermalConfig::default(),
             structural: StructuralPropagationConfig::default(),
             script: MissionScript::default(),
+            bodies: Vec::new(),
         }
     }
 }
@@ -829,7 +881,7 @@ pub struct LaunchConfig {
     pub window: LaunchWindowConfig,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct LaunchLocationConfig {
     pub name: String,
@@ -838,6 +890,19 @@ pub struct LaunchLocationConfig {
     pub altitude_m: f64,
     pub timezone: String,
     pub pad: String,
+}
+
+impl Default for LaunchLocationConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            latitude: 90.0, // 默认北极，与原始硬编码 (0, R, 0) 一致
+            longitude: 0.0,
+            altitude_m: 0.0,
+            timezone: String::new(),
+            pad: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -877,7 +942,7 @@ impl MissionConfig {
         let content =
             fs::read_to_string(path).map_err(|e| format!("Failed to read config: {}", e))?;
 
-        let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut sections: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         let mut current_section = String::new();
 
         for line in content.lines() {
@@ -1323,6 +1388,12 @@ impl MissionConfig {
             if let Some(v) = lc.get("auto_calculate_window") {
                 config.launch.window.auto_calculate = v == "true";
             }
+            if let Some(v) = lc.get("latitude_deg") {
+                config.launch_location.latitude = v.parse().unwrap_or(0.0);
+            }
+            if let Some(v) = lc.get("longitude_deg") {
+                config.launch_location.longitude = v.parse().unwrap_or(0.0);
+            }
         }
 
         if let Some(ls) = sections.get("launch_site") {
@@ -1438,6 +1509,41 @@ impl MissionConfig {
             config.script.events.push(evt);
         }
 
+        // 解析 [body.Name] 节
+        for (sec_name, kv) in &sections {
+            if !sec_name.starts_with("body.") {
+                continue;
+            }
+            let name = sec_name.strip_prefix("body.").unwrap_or(sec_name).to_string();
+            let mass = kv.get("mass").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let radius = kv.get("radius").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let sea_level_pressure = kv.get("seaLevelPressure").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let scale_height = kv.get("scaleHeight").and_then(|v| v.parse().ok()).unwrap_or(8_500.0);
+
+            // position: support both semicolon-separated and separate lines
+            let parse_vec3 = |px: &str, py: &str, pz: &str| -> Vec3 {
+                // Try separate keys first (pos.x / pos.y / pos.z)
+                if let (Some(x), Some(y), Some(z)) = (kv.get(px), kv.get(py), kv.get(pz)) {
+                    if let (Ok(x), Ok(y), Ok(z)) = (x.parse(), y.parse(), z.parse()) {
+                        return Vec3::new(x, y, z);
+                    }
+                }
+                Vec3::zero()
+            };
+            let pos = parse_vec3("pos.x", "pos.y", "pos.z");
+            let vel = parse_vec3("vel.x", "vel.y", "vel.z");
+
+            config.bodies.push(BodyDef {
+                name,
+                mass,
+                radius,
+                pos,
+                vel,
+                sea_level_pressure,
+                scale_height,
+            });
+        }
+
         Ok(config)
     }
 }
@@ -1489,6 +1595,8 @@ pub struct MissionControl {
     pub max_q_passed: bool,
     pub last_engine_status: EngineStatus,
     pub cutoff_fired: bool,
+    /// 圆化断油时刻（用于 TLI 等待近地点计时）
+    pub cutoff_time: f64,
     /// 滑行阶段：MECO 后等待远地点再烧 ICPS
     pub coasting: bool,
     pub coast_start_time: f64,
@@ -1520,6 +1628,10 @@ pub struct MissionControl {
     pub phase_name: String,
     /// 进入当前阶段时的任务时间
     pub phase_entry_time: f64,
+    /// 进入当前阶段时的海拔（用于方向敏感条件的进度计算）
+    pub phase_entry_altitude: f64,
+    /// 进入当前阶段时的速度大小
+    pub phase_entry_velocity: f64,
     /// 运行时标志
     pub flags: HashMap<String, bool>,
 
@@ -1545,6 +1657,7 @@ impl MissionControl {
             max_q_passed: false,
             last_engine_status: EngineStatus::default(),
             cutoff_fired: false,
+            cutoff_time: 0.0,
             coasting: false,
             coast_start_time: 0.0,
             icps_ignited: false,
@@ -1561,6 +1674,8 @@ impl MissionControl {
             tcm_target_velocity: 0.0,
             phase_name: "PreLaunch".into(),
             phase_entry_time: 0.0,
+            phase_entry_altitude: 0.0,
+            phase_entry_velocity: 0.0,
             flags: HashMap::new(),
             tcm_target_dv: -200.0,
         }
@@ -1583,7 +1698,7 @@ impl MissionControl {
         self.summary.target_orbit.periapsis_m = self.script.target_orbit.periapsis_km * 1000.0;
         self.triggered_events.clear();
         self.cutoff_fired = false;
-        self.coasting = false;
+        self.cutoff_time = 0.0;
         self.coast_start_time = 0.0;
         self.icps_ignited = false;
         self.icps_ignition_time = 0.0;
@@ -1599,6 +1714,8 @@ impl MissionControl {
         self.tcm_target_velocity = 0.0;
         self.phase_name = "PreLaunch".into();
         self.phase_entry_time = 0.0;
+        self.phase_entry_altitude = 0.0;
+        self.phase_entry_velocity = 0.0;
         self.flags.clear();
     }
 
@@ -1669,7 +1786,9 @@ impl MissionControl {
             };
 
             if should_transition {
-                self.set_phase_name(&transition.to);
+                let alt = self.get_current_altitude(vessel, earth);
+                let vel = self.get_current_velocity(vessel);
+                self.set_phase_name(&transition.to, alt, vel);
                 // 同时也更新 enum 字段供旧代码兼容
                 self.current_phase = Self::phase_name_to_enum(&transition.to);
                 eprintln!("  T+ {:7.1}s  Phase → {}", self.mission_time, transition.to);
@@ -1732,10 +1851,186 @@ impl MissionControl {
         }
     }
 
-    /// 设置当前阶段名并记录进入时间
-    fn set_phase_name(&mut self, name: &str) {
+    /// 计算当前阶段到下一阶段的进度（用于实时展示）
+    pub fn compute_next_phase_info(&self, vessel: &Vessel, earth: &Planet) -> Option<NextPhaseInfo> {
+        let transition = self.script.phase_transitions.iter()
+            .find(|t| t.from == self.phase_name)?;
+        self.compute_next_phase_info_for_transition(transition, vessel, earth)
+    }
+
+    /// 获取所有后续阶段转换的进度信息（用于 UI 面板）
+    pub fn compute_all_remaining_phases(&self, vessel: &Vessel, earth: &Planet) -> Vec<NextPhaseInfo> {
+        let mut result = Vec::new();
+        let mut current: String = self.phase_name.clone();
+        // 最多追踪 10 个后续阶段，防止无限循环
+        for _ in 0..10 {
+            let next = current.clone();
+            let transition = self.script.phase_transitions.iter()
+                .find(|t| t.from == next);
+            match transition {
+                Some(t) => {
+                    if let Some(info) = self.compute_next_phase_info_for_transition(t, vessel, earth) {
+                        current = info.next_phase.clone();
+                        result.push(info);
+                    } else {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+        result
+    }
+
+    /// 为指定 Transition 计算进度（内部复用 compute_next_phase_info 的逻辑）
+    fn compute_next_phase_info_for_transition(
+        &self,
+        transition: &PhaseTransition,
+        vessel: &Vessel,
+        earth: &Planet,
+    ) -> Option<NextPhaseInfo> {
+        let altitude = self.get_current_altitude(vessel, earth);
+        let velocity = self.get_current_velocity(vessel);
+        let grav_const = crate::G;
+        let earth_mass = earth.get_mass();
+        let earth_radius = earth.get_radius();
+        let v_orbital = (grav_const * earth_mass / (earth_radius + altitude)).sqrt();
+        let pos = *vessel.body.get_position();
+        let vel = *vessel.body.get_velocity();
+        let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
+
+        let mut conditions = Vec::new();
+
+        for cond in &transition.conditions {
+            let (label, current, target, is_boolean) = match cond.trigger_type {
+                TriggerType::TimeElapsed =>
+                    ("T+", self.mission_time, cond.value, false),
+                TriggerType::AltitudeAbove =>
+                    ("alt↑", altitude, cond.value, false),
+                TriggerType::AltitudeBelow =>
+                    ("alt↓", altitude, cond.value, false),
+                TriggerType::VelocityAbove =>
+                    ("vel", velocity, cond.value, false),
+                TriggerType::VelocityBelow =>
+                    ("vel↓", velocity, cond.value, false),
+                TriggerType::VelocityRatioAbove => {
+                    let cur = velocity / v_orbital;
+                    ("v/v₀", cur, cond.value, false)
+                }
+                TriggerType::VelocityRatioBelow => {
+                    let cur = velocity / v_orbital;
+                    ("v/v₀↓", cur, cond.value, false)
+                }
+                TriggerType::TimeSincePhaseAbove =>
+                    ("Δt", self.mission_time - self.phase_entry_time, cond.value, false),
+                TriggerType::DynamicPressureAbove =>
+                    ("Q", self.telemetry.dynamic_pressure_pa, cond.value, false),
+                TriggerType::MaxqPassed =>
+                    ("MaxQ", if self.max_q_passed { 1.0 } else { 0.0 }, 1.0, true),
+                TriggerType::EngineCutoff =>
+                    ("cutoff", if self.cutoff_fired { 1.0 } else { 0.0 }, 1.0, true),
+                TriggerType::FlagIsTrue =>
+                    (cond.parameter.as_str(), if self.flags.get(&cond.parameter).copied().unwrap_or(false) { 1.0 } else { 0.0 }, 1.0, true),
+                TriggerType::FlagIsFalse => {
+                    let met = !self.flags.get(&cond.parameter).copied().unwrap_or(true);
+                    (cond.parameter.as_str(), if met { 1.0 } else { 0.0 }, 1.0, true)
+                }
+                TriggerType::OrbitCircularized => {
+                    let met = if oe.semi_major_axis > 0.0 && oe.eccentricity < 1.0 {
+                        let diff = oe.semi_major_axis * (1.0 + oe.eccentricity)
+                            - oe.semi_major_axis * (1.0 - oe.eccentricity);
+                        diff < cond.value
+                    } else { false };
+                    ("circ", if met { 1.0 } else { 0.0 }, 1.0, true)
+                }
+                TriggerType::ApoapsisAbove => {
+                    let ap = oe.semi_major_axis * (1.0 + oe.eccentricity) - earth_radius;
+                    ("ap", ap.max(0.0), cond.value, false)
+                }
+                TriggerType::PeriapsisAbove => {
+                    let pe = oe.semi_major_axis * (1.0 - oe.eccentricity) - earth_radius;
+                    ("pe", pe.max(0.0), cond.value, false)
+                }
+                _ => continue,
+            };
+
+            let target_safe = if target.abs() < 1e-12 { 1.0 } else { target };
+
+            let progress = if is_boolean {
+                if current >= 0.5 { 1.0 } else { 0.0 }
+            } else {
+                match cond.trigger_type {
+                    TriggerType::AltitudeAbove => {
+                        let entry = self.phase_entry_altitude;
+                        if current >= target_safe { 1.0 }
+                        else if current <= entry { 0.0 }
+                        else { ((current - entry) / (target_safe - entry)).min(1.0).max(0.0) }
+                    }
+                    TriggerType::AltitudeBelow => {
+                        let entry = self.phase_entry_altitude;
+                        if current <= target_safe { 1.0 }
+                        else if current >= entry { 0.0 }
+                        else { ((entry - current) / (entry - target_safe)).min(1.0).max(0.0) }
+                    }
+                    TriggerType::VelocityAbove => {
+                        let entry = self.phase_entry_velocity;
+                        if current >= target_safe { 1.0 }
+                        else if current <= entry { 0.0 }
+                        else { ((current - entry) / (target_safe - entry)).min(1.0).max(0.0) }
+                    }
+                    TriggerType::VelocityBelow => {
+                        let entry = self.phase_entry_velocity;
+                        if current <= target_safe { 1.0 }
+                        else if current >= entry { 0.0 }
+                        else { ((entry - current) / (entry - target_safe)).min(1.0).max(0.0) }
+                    }
+                    TriggerType::VelocityRatioAbove => {
+                        let v_orb_entry = (grav_const * earth_mass / (earth_radius + self.phase_entry_altitude)).sqrt();
+                        let entry = if v_orb_entry > 0.0 { self.phase_entry_velocity / v_orb_entry } else { 0.0 };
+                        if current >= target_safe { 1.0 }
+                        else if current <= entry { 0.0 }
+                        else { ((current - entry) / (target_safe - entry)).min(1.0).max(0.0) }
+                    }
+                    TriggerType::VelocityRatioBelow => {
+                        let v_orb_entry = (grav_const * earth_mass / (earth_radius + self.phase_entry_altitude)).sqrt();
+                        let entry = if v_orb_entry > 0.0 { self.phase_entry_velocity / v_orb_entry } else { 0.0 };
+                        if current <= target_safe { 1.0 }
+                        else if current >= entry { 0.0 }
+                        else { ((entry - current) / (entry - target_safe)).min(1.0).max(0.0) }
+                    }
+                    _ => (current / target_safe).min(1.0).max(0.0),
+                }
+            };
+
+            let is_met = match cond.trigger_type {
+                TriggerType::AltitudeBelow | TriggerType::VelocityBelow
+                | TriggerType::VelocityRatioBelow => current <= target_safe,
+                _ => current >= target_safe,
+            };
+
+            conditions.push(ConditionProgress {
+                label: label.to_string(),
+                current,
+                target,
+                progress,
+                is_met,
+                is_boolean,
+            });
+        }
+
+        Some(NextPhaseInfo {
+            next_phase: transition.to.clone(),
+            conditions,
+            require_all: transition.require_all,
+        })
+    }
+
+    /// 设置当前阶段名并记录进入时间/海拔/速度
+    fn set_phase_name(&mut self, name: &str, entry_altitude: f64, entry_velocity: f64) {
         self.phase_name = name.to_string();
         self.phase_entry_time = self.mission_time;
+        self.phase_entry_altitude = entry_altitude;
+        self.phase_entry_velocity = entry_velocity;
     }
 
     /// 阶段名字符串 → MissionPhase 枚举
@@ -1824,6 +2119,7 @@ impl MissionControl {
                         let active_stage = vessel.current_stage;
                         vessel.set_stage_throttle(active_stage, 0.0);
                         self.cutoff_fired = true;
+                        self.cutoff_time = self.mission_time;
                         self.flags.insert("cutoff_fired".into(), true);
                         eprintln!(
                             "  T+ {:7.1}s  Orbit circularized (pe={:.0}km, ap={:.0}km, e={:.4})",
@@ -1834,23 +2130,45 @@ impl MissionControl {
             }
         }
 
-        // TLI (Trans-Lunar Injection)
+        // TLI (Trans-Lunar Injection) — 等待近地点再点火
         if self.cutoff_fired && !self.tli_complete && self.current_phase == MissionPhase::Tei {
+            let pos = *vessel.body.get_position();
+            let vel = *vessel.body.get_velocity();
+
             if !self.tli_started {
-                self.tli_started = true;
-                self.tli_ignition_time = self.mission_time;
-                let active_stage = vessel.current_stage;
-                vessel.set_stage_throttle(active_stage, 1.0);
-                eprintln!("  T+ {:7.1}s  TLI Ignition", self.mission_time);
+                // 等待近地点：径向速度≈0 且高度≈近地点
+                let r_dot_v = pos.dot(&vel);
+                let altitude = pos.length() - earth.get_radius();
+                let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
+                let periapsis_alt =
+                    oe.semi_major_axis * (1.0 - oe.eccentricity) - earth.get_radius();
+                let time_since_cutoff = self.mission_time - self.cutoff_time;
+
+                let near_periapsis =
+                    r_dot_v.abs() < 100.0 && altitude < (periapsis_alt + 50_000.0);
+                let waited_too_long = time_since_cutoff > 7000.0;
+
+                if near_periapsis || waited_too_long {
+                    self.tli_started = true;
+                    self.tli_ignition_time = self.mission_time;
+                    let active_stage = vessel.current_stage;
+                    vessel.set_stage_throttle(active_stage, 1.0);
+                    eprintln!(
+                        "  T+ {:7.1}s  TLI Ignition @ periapsis (alt={:.0}km, pe={:.0}km)",
+                        self.mission_time,
+                        altitude / 1000.0,
+                        periapsis_alt / 1000.0
+                    );
+                }
             } else {
-                let pos = *vessel.body.get_position();
-                let vel = *vessel.body.get_velocity();
+                // TLI 燃烧中 — 检查完成条件
                 let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
                 let apoapsis_alt =
                     oe.semi_major_axis * (1.0 + oe.eccentricity) - earth.get_radius();
                 let burn_duration = self.mission_time - self.tli_ignition_time;
 
-                if apoapsis_alt > 400_000_000.0 || burn_duration > 1800.0 {
+                // 目标远地点：月球距离（~384,400 km），留余量
+                if apoapsis_alt > 400_000_000.0 || burn_duration > 2200.0 {
                     let stage = vessel.current_stage;
                     vessel.set_stage_throttle(stage, 0.0);
                     self.tli_complete = true;

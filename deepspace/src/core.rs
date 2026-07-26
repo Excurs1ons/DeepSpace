@@ -114,6 +114,38 @@ impl Quaternion {
         let yaw = siny_cosp.atan2(cosy_cosp);
         Vec3::new(pitch, yaw, roll)
     }
+
+    /// 创建将 `from` 旋转到 `to` 的最短弧四元数
+    ///
+    /// 两个向量都自动归一化。处理 0°（恒等）和 180°（绕任意垂直轴）边界。
+    pub fn rotation_between(from: &Vec3, to: &Vec3) -> Self {
+        let from = from.normalized();
+        let to = to.normalized();
+        let dot = from.dot(&to);
+
+        // 已经对齐
+        if dot > 0.9999 {
+            return Self::identity();
+        }
+
+        // 180° 翻转：绕某个垂直轴旋转 π
+        if dot < -0.9999 {
+            // 找一个与 from 垂直的轴
+            let axis = from.cross(&Vec3::new(1.0, 0.0, 0.0));
+            let axis = if axis.length_squared() < 1e-10 {
+                from.cross(&Vec3::new(0.0, 1.0, 0.0))
+            } else {
+                axis
+            };
+            return Self::from_axis_angle(axis.normalized(), std::f64::consts::PI);
+        }
+
+        // 一般情况：q = (dot+1, cross(from,to)) 再归一化
+        let s = (2.0 * (1.0 + dot)).sqrt();
+        let w = s * 0.5;
+        let v = from.cross(&to) / s;
+        Self::new(w, v.x, v.y, v.z).normalized()
+    }
 }
 
 impl std::ops::Mul<&Quaternion> for &Quaternion {

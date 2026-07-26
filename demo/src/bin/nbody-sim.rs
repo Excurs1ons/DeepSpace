@@ -10,40 +10,6 @@
 
 use std::env;
 
-// =====================================================================
-// 轨道尾迹
-// =====================================================================
-const TRAIL_LENGTH: usize = 200;
-struct Trail {
-    points: Vec<macroquad::math::Vec3>,
-    cursor: usize,
-    full: bool,
-}
-impl Trail {
-    fn new() -> Self {
-        Self {
-            points: vec![macroquad::math::Vec3::ZERO; TRAIL_LENGTH],
-            cursor: 0,
-            full: false,
-        }
-    }
-    fn push(&mut self, pos: macroquad::math::Vec3) {
-        self.points[self.cursor] = pos;
-        self.cursor = (self.cursor + 1) % TRAIL_LENGTH;
-        if self.cursor == 0 {
-            self.full = true;
-        }
-    }
-    fn points(&self) -> Vec<macroquad::math::Vec3> {
-        if self.full {
-            let (a, b) = self.points.split_at(self.cursor);
-            [a, b].concat()
-        } else {
-            self.points[..self.cursor].to_vec()
-        }
-    }
-}
-
 fn body_color(name: &str) -> macroquad::color::Color {
     use demo::render::*;
     match name {
@@ -72,8 +38,12 @@ async fn viz_main(scene_path: String) {
     println!("Scene: {} ({} bodies)", config.name, config.bodies.len());
 
     let mut runtime = deepspace::scene::SceneRuntime::new(&config);
+
+    // 加载自定义字体
+    load_custom_font("assets/fonts/Roboto-Regular.ttf").await;
+
     let n = runtime.sys.bodies.len();
-    let mut trails: Vec<Trail> = (0..n).map(|_| Trail::new()).collect();
+    let mut trails: Vec<Trail> = (0..n).map(|_| Trail::new(200)).collect();
 
     // 根据系统尺度自动设置相机距离
     let max_dist = runtime
@@ -111,6 +81,8 @@ async fn viz_main(scene_path: String) {
         let sw = screen_width();
         let sh = screen_height();
 
+        let s = ui_scale();
+
         // 绘制轨道尾迹
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
             if i < trails.len() {
@@ -141,42 +113,42 @@ async fn viz_main(scene_path: String) {
             draw_line(cx - 1.0, cy, cx + 1.0, cy, 2.0, color);
 
             // 名称标签
-            draw_text(&body.name, cx + r_px + 4.0, cy + 4.0, 14.0, color);
+            text(&body.name, cx + r_px + 6.0 * s, cy + 6.0 * s, 20.0 * s, color);
         }
 
         // -----------------------------------------------------------------
         // HUD 文字
         // -----------------------------------------------------------------
-        draw_text(&format!("Scene: {}", config.name), 10.0, 24.0, 20.0, WHITE);
-        draw_text(
+        text(&format!("Scene: {}", config.name), 10.0, 30.0 * s, 28.0 * s, WHITE);
+        text(
             &format!("Time: {:.2e} s", runtime.sys.time),
             10.0,
-            48.0,
-            18.0,
+            58.0 * s,
+            24.0 * s,
             LIGHTGRAY,
         );
-        draw_text(&format!("Bodies: {n}"), 10.0, 70.0, 16.0, GRAY);
-        draw_text(&format!("dt: {:.1e} s", config.dt), 10.0, 90.0, 16.0, GRAY);
-        draw_text(
+        text(&format!("Bodies: {n}"), 10.0, 86.0 * s, 24.0 * s, LIGHTGRAY);
+        text(&format!("dt: {:.1e} s", config.dt), 10.0, 110.0 * s, 24.0 * s, LIGHTGRAY);
+        text(
             "Left-drag: Rotate | Scroll: Zoom | ESC: Exit",
             10.0,
-            sh - 50.0,
-            14.0,
-            DARKGRAY,
+            sh - 30.0 * s,
+            20.0 * s,
+            Color::new(0.7, 0.8, 0.9, 0.9),
         );
 
         // 天体列表面板
-        let lx = sw - 240.0;
-        draw_text("Celestial Bodies", lx, 24.0, 18.0, WHITE);
+        let lx = sw - 260.0 * s;
+        text("Celestial Bodies", lx, 30.0 * s, 24.0 * s, WHITE);
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
-            let y = 48.0 + i as f32 * 20.0;
+            let y = 56.0 * s + i as f32 * 28.0 * s;
             let c = body_color(&body.name);
-            draw_rectangle(lx, y - 2.0, 12.0, 12.0, c);
-            draw_text(
+            draw_rectangle(lx, y - 2.0 * s, 16.0 * s, 16.0 * s, c);
+            text(
                 &format!("{}  M={:.2e}kg", body.name, body.mass),
-                lx + 16.0,
-                y + 8.0,
-                14.0,
+                lx + 22.0 * s,
+                y + 12.0 * s,
+                20.0 * s,
                 LIGHTGRAY,
             );
         }

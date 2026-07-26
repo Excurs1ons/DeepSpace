@@ -572,6 +572,18 @@ impl Vessel {
         }
     }
 
+    /// 获取指定级的当前油门（取该级第一个活跃引擎的值）
+    pub fn get_stage_throttle(&self, stage: i32) -> f64 {
+        for part in &self.parts {
+            if part.stage == stage && part.active {
+                if let Some(e) = part.as_engine() {
+                    return e.throttle;
+                }
+            }
+        }
+        0.0
+    }
+
     /// 更新一个时间步，返回发动机状态
     pub fn update(&mut self, dt: f64, ambient_pressure: f64) -> EngineStatus {
         let mut status = EngineStatus::default();
@@ -612,30 +624,54 @@ impl Vessel {
             let fuel_to_consume = mdot * engine.fuel_mass_fraction() * dt;
             let ox_to_consume = mdot * engine.ox_mass_fraction() * dt;
 
-            let mut fuel_ok = true;
-            let mut ox_ok = true;
+            let same_prop = engine.fuel_type == engine.ox_type;
 
-            for j in 0..self.parts.len() {
-                if self.parts[j].stage != self.parts[ei].stage || self.parts[j].decoupled {
-                    continue;
-                }
-                if let PartKind::FuelTank(ref mut tank) = self.parts[j].kind {
-                    if tank.propellant == engine.fuel_type {
-                        if !tank.consume_fuel(fuel_to_consume) {
-                            fuel_ok = false;
+            if same_prop {
+                // 单组元推进剂（如 SRB 固体）：合并消耗，依次从各箱扣除
+                let mut remaining = mdot * dt;
+                for j in 0..self.parts.len() {
+                    if self.parts[j].stage != self.parts[ei].stage || self.parts[j].decoupled {
+                        continue;
+                    }
+                    if let PartKind::FuelTank(ref mut tank) = self.parts[j].kind {
+                        if tank.propellant == engine.fuel_type && remaining > 0.0 {
+                            let consume = remaining.min(tank.current_fuel);
+                            if !tank.consume_fuel(consume) {
+                                // 不该发生：consume ≤ current_fuel
+                            }
+                            remaining -= consume;
                         }
                     }
-                    if tank.propellant == engine.ox_type {
-                        if !tank.consume_fuel(ox_to_consume) {
-                            ox_ok = false;
+                }
+                if remaining > 0.0 && dt > 0.0 {
+                    self.parts[ei].active = false;
+                }
+            } else {
+                // 双组元推进剂：燃料/氧化剂分别依次扣除
+                let mut fuel_remaining = fuel_to_consume;
+                let mut ox_remaining = ox_to_consume;
+
+                for j in 0..self.parts.len() {
+                    if self.parts[j].stage != self.parts[ei].stage || self.parts[j].decoupled {
+                        continue;
+                    }
+                    if let PartKind::FuelTank(ref mut tank) = self.parts[j].kind {
+                        if tank.propellant == engine.fuel_type && fuel_remaining > 0.0 {
+                            let consume = fuel_remaining.min(tank.current_fuel);
+                            tank.consume_fuel(consume);
+                            fuel_remaining -= consume;
+                        }
+                        if tank.propellant == engine.ox_type && ox_remaining > 0.0 {
+                            let consume = ox_remaining.min(tank.current_fuel);
+                            tank.consume_fuel(consume);
+                            ox_remaining -= consume;
                         }
                     }
                 }
-            }
 
-            // 仅在正向推进时因燃料耗尽熄火；倒放时不熄火
-            if (!fuel_ok || !ox_ok) && dt > 0.0 {
-                self.parts[ei].active = false;
+                if (fuel_remaining > 0.0 || ox_remaining > 0.0) && dt > 0.0 {
+                    self.parts[ei].active = false;
+                }
             }
         }
 

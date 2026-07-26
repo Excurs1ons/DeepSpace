@@ -17,11 +17,6 @@ use deepspace::simulation::{
 use deepspace::vessel::{Part, PropellantType, Vessel};
 use deepspace::{Vec3, G};
 
-// 月球常数
-const MOON_DIST: f64 = 384_400_000.0; // 地月平均距离 m
-const MOON_PERIOD: f64 = 2_358_720.0; // 轨道周期 27.3 天 (s)
-const MOON_OMEGA: f64 = 2.0 * std::f64::consts::PI / MOON_PERIOD;
-
 // =====================================================================
 // CLI 参数解析
 // =====================================================================
@@ -156,9 +151,24 @@ fn write_telemetry_csv(path: &str, log: &[TelemetryData]) -> Result<(), String> 
 // =====================================================================
 // 飞船构建器
 
-fn build_vessel_from_config(config: &MissionConfig, vessel: &mut Vessel) {
+fn build_vessel_from_config(
+    config: &MissionConfig,
+    vessel: &mut Vessel,
+    body_radius: f64,
+    launch_lat_deg: f64,
+    launch_lon_deg: f64,
+) {
+    // 根据经纬度计算地表发射位置（Y-up：Y=极轴, XZ=赤道面）
+    let lat_rad = launch_lat_deg.to_radians();
+    let lon_rad = launch_lon_deg.to_radians();
+    let launch_pos = deepspace::Vec3::new(
+        body_radius * lat_rad.cos() * lon_rad.cos(),
+        body_radius * lat_rad.sin(),
+        body_radius * lat_rad.cos() * lon_rad.sin(),
+    );
+
     vessel.body = deepspace::physics::PhysicsBody::new(
-        deepspace::Vec3::new(0.0, 6_371_000.0, 0.0),
+        launch_pos,
         deepspace::Vec3::zero(),
         0.0,
         12_000_000.0,
@@ -427,8 +437,12 @@ fn build_falcon9_stack(config: &MissionConfig, vessel: &mut Vessel) {
 pub struct SimulationApp {
     pub vessel: Vessel,
     pub earth: Planet,
-    pub moon: Planet,
-    pub moon_angle: f64, // 月球轨道角 (rad)，相对于地心
+    /// 所有天体（用于渲染）
+    pub bodies: Vec<Planet>,
+    /// 天体当前世界坐标
+    pub body_positions: Vec<Vec3>,
+    /// 天体速度（用于线性动画）
+    pub body_velocities: Vec<Vec3>,
     pub mission_control: MissionControl,
     pub thermal: ThermalSimulation,
     pub config: MissionConfig,
@@ -443,13 +457,6 @@ pub struct SimulationApp {
 
 impl SimulationApp {
     pub fn new(args: &CliArgs) -> Self {
-        let earth = Planet::new(
-            "Earth",
-            5.9722e24,
-            6_371_000.0,
-            Atmosphere::new(101_325.0, 8_500.0),
-        );
-
         // 加载配置
         let config = match MissionConfig::load(&args.mission_path) {
             Ok(c) => c,
@@ -550,8 +557,18 @@ impl SimulationApp {
 
         // 创建飞船
         let mut vessel = Vessel::new(&config.mission_name);
-        build_vessel_from_config(&config, &mut vessel);
-
+        let body_radius = config
+            .bodies
+            .first()
+            .map(|b| b.radius)
+            .unwrap_or(6_371_000.0);
+        build_vessel_from_config(
+            &config,
+            &mut vessel,
+            body_radius,
+            config.launch_location.latitude,
+            config.launch_location.longitude,
+        );
         // 初始化 MissionControl
         let mut mission_control = MissionControl::new();
         mission_control.load_mission(&config.script);
@@ -581,14 +598,33 @@ impl SimulationApp {
         vessel.set_damage_tps(config.damage.initial_tps);
         vessel.set_damage_structural(config.damage.initial_structural);
 
-        // 初始化月球（以模拟时间 0 为初始相位）——简单圆轨道黄道面近似
-        let moon = Planet::new("Moon", 7.342e22, 1_737_000.0, Atmosphere::new(0.0, 0.0));
+        // 从配置构建天体
+        let mut bodies: Vec<Planet> = Vec::new();
+        let mut body_positions: Vec<Vec3> = Vec::new();
+        let mut body_velocities: Vec<Vec3> = Vec::new();
+        for b in &config.bodies {
+            let atm = Atmosphere::new(b.sea_level_pressure, b.scale_height);
+            bodies.push(Planet::new(&b.name, b.mass, b.radius, atm));
+            body_positions.push(b.pos);
+            body_velocities.push(b.vel);
+        }
+
+        // 若配置未定义天体，使用默认地球
+        if bodies.is_empty() {
+            let earth_atm = Atmosphere::new(101_325.0, 8_500.0);
+            bodies.push(Planet::new("Earth", 5.9722e24, 6_371_000.0, earth_atm));
+            body_positions.push(Vec3::zero());
+            body_velocities.push(Vec3::zero());
+        }
+
+        let earth = bodies[0].clone();
 
         SimulationApp {
             vessel,
             earth,
-            moon,
-            moon_angle: 0.0,
+            bodies,
+            body_positions,
+            body_velocities,
             mission_control,
             thermal: ThermalSimulation::new(config.thermal),
             config,
@@ -602,34 +638,75 @@ impl SimulationApp {
         }
     }
 
+    /// 返回第二颗天体（月球等）在惯性系中的当前位置
+    pub fn moon_position(&self) -> Vec3 {
+        if self.body_positions.len() > 1 {
+            self.body_positions[1]
+        } else {
+            Vec3::zero()
+        }
+    }
+
     /// 主仿真步进（支持倒放：dt 可为负）
     pub fn step(&mut self, dt: f64) {
         if self.mission_complete {
             return;
         }
-        // 重力
-        let gravity = self.earth.get_gravity_at(*self.vessel.body.get_position());
-        self.vessel
-            .body
-            .add_force(gravity * self.vessel.body.get_mass());
 
+
+        // 天体轨道传播：使用圆周轨道近似替代线性漂移
+        // 第 0 个天体（地球）固定在原点，其余天体绕其做圆周运动
+        // 位置和速度同步绕轨道法线旋转，保持轨道元素不变
+        if !self.body_positions.is_empty() {
+            let primary = self.body_positions[0];
+            for i in 1..self.body_positions.len() {
+                let r = self.body_positions[i] - primary;
+                let v = self.body_velocities[i];
+                let dist = r.length();
+                let speed = v.length();
+                if dist > 1.0 && speed > 1e-6 {
+                    // 角速度 ω = v_perp / r ≈ |v| / |r|（圆周近似）
+                    let omega = speed / dist;
+                    let dtheta = omega * dt;
+                    // 轨道法线轴（r × v 单位化）
+                    let normal = r.cross(&v).normalized();
+                    // 罗德里格旋转：v' = v*cos(θ) + (n̂ × v)*sin(θ)
+                    let cos_a = dtheta.cos();
+                    let sin_a = dtheta.sin();
+                    let r_rot = r * cos_a + normal.cross(&r) * sin_a;
+                    let v_rot = v * cos_a + normal.cross(&v) * sin_a;
+                    self.body_positions[i] = primary + r_rot;
+                    self.body_velocities[i] = v_rot;
+                }
+            }
+        }
+
+        // 主天体（第一颗）引力
+        let primary_pos = if self.body_positions.is_empty() {
+            Vec3::zero()
+        } else {
+            self.body_positions[0]
+        };
+        let vessel_pos = *self.vessel.body.get_position();
+        let r_to_primary = primary_pos - vessel_pos;
+        let dist_to_primary = r_to_primary.length();
+        if dist_to_primary > 1.0 {
+            let g_acc = G * self.bodies[0].get_mass() / (dist_to_primary * dist_to_primary);
+            let gravity_dir = r_to_primary.normalized();
+            let vessel_mass = self.vessel.body.get_mass();
+            let gravity_force = gravity_dir * (g_acc * vessel_mass);
+            self.vessel.body.add_force(gravity_force);
+        }
+
+        // 其余天体引力扰动（N体近似）
         let pos = *self.vessel.body.get_position();
-
-        // 月球引力（N体扰动）
-        self.moon_angle += MOON_OMEGA * dt;
-        let moon_pos = Vec3::new(
-            self.moon_angle.cos() * MOON_DIST,
-            self.moon_angle.sin() * MOON_DIST,
-            0.0,
-        );
-        let r_to_moon = moon_pos - pos;
-        let dist_to_moon = r_to_moon.length();
-        if dist_to_moon > 1.0 {
-            let moon_acc =
-                r_to_moon.normalized() * (G * self.moon.get_mass() / (dist_to_moon * dist_to_moon));
-            self.vessel
-                .body
-                .add_force(moon_acc * self.vessel.body.get_mass());
+        for i in 1..self.body_positions.len() {
+            let r = self.body_positions[i] - pos;
+            let d = r.length();
+            if d > 1.0 {
+                let acc = r.normalized() * (G * self.bodies[i].get_mass() / (d * d));
+                self.vessel.body.add_force(acc * self.vessel.body.get_mass());
+            }
         }
 
         // 大气参数
@@ -640,6 +717,7 @@ impl SimulationApp {
         let mach = speed / 340.0; // 海平面音速近似
 
         self.thermal.update(dt, speed, density, integrity);
+
 
         // 气动阻力（弹道系数 + 马赫数相关 Cd）
         if density > 0.0 && speed > 1.0 {
@@ -658,7 +736,8 @@ impl SimulationApp {
             // 参考面积（SLS 芯级 ~8m 直径 ~= 50m²，再入时 ~100m²）
             let mut ref_area = if altitude > 100_000.0 { 50.0 } else { 100.0 };
             // 再入末端：海拔 < 15000m 三级降落伞（Orion 3 × 35m 主伞 ~2886m²）
-            if altitude < 15000.0 && altitude >= 0.0 && self.simulation_time > 500000.0 {
+            // 速度门限：仅亚音速（Mach < 0.8）展开，防止高空高速撕裂
+            if altitude < 15000.0 && altitude >= 0.0 && self.simulation_time > 500000.0 && mach < 0.8 {
                 ref_area = if altitude < 1000.0 {
                     3000.0
                 } else if altitude < 5000.0 {
@@ -725,12 +804,7 @@ impl SimulationApp {
 
         self.simulation_time += dt;
 
-        // 发动机 & 推进剂
-        let ambient_pressure = self.earth.get_atmosphere().get_pressure(altitude);
-        let engine_status = self.vessel.update(dt, ambient_pressure);
-        self.vessel.body.update(dt);
-
-        // 飞控计算制导指令（余弦重力转弯等）
+        // 飞控计算制导指令（在 vessel.update 之前设置朝向和油门）
         let state = GuidanceState {
             altitude,
             velocity_mag: speed,
@@ -739,19 +813,76 @@ impl SimulationApp {
             mission_time: self.simulation_time,
             total_mass_kg: self.vessel.body.get_mass(),
             stage: self.vessel.current_stage,
-            throttle: engine_status.max_throttle,
+            throttle: self.vessel.get_stage_throttle(self.vessel.current_stage),
         };
         let cmd = self.flight_computer.update(&state);
-        self.vessel
-            .body
-            .set_orientation_from_dir(cmd.thrust_direction);
+
+        // 将制导指令从局部垂直系变换到世界系
+        // 注意：制导输出的坐标系取决于当前级：
+        //   - Stage 0（芯级/余弦制导）：输出为 (sin(pitch), cos(pitch), 0) LVLH 局部坐标
+        //   - Stage ≥1（ICPS/PEG 制导）：输出已经是世界系速度方向，无需变换
+        let pos = *self.vessel.body.get_position();
+        let up = pos.normalized();
+
+        // 水平方向：优先用速度的水平分量，回退到东向
+        let vel = *self.vessel.body.get_velocity();
+        let vel_h = vel - vel.dot(&up) * up;
+        let horiz = if vel_h.length_squared() > 1e-6 {
+            vel_h.normalized()
+        } else {
+            // 发射台无速度：用东向
+            let east = Vec3::new(-pos.z, 0.0, pos.x);
+            let east_h = east - east.dot(&up) * up;
+            if east_h.length_squared() > 1e-10 {
+                east_h.normalized()
+            } else {
+                Vec3::new(1.0, 0.0, 0.0)
+            }
+        };
+        let normal = up.cross(&horiz).normalized();
+
+        // 制导输出从局部系变换到世界系
+        let local_dir = cmd.thrust_direction;
+        let world_dir = if self.vessel.current_stage <= 0 {
+            // Stage 0（余弦制导）：LVLH → 世界
+            (horiz * local_dir.x + up * local_dir.y + normal * local_dir.z).normalized()
+        } else {
+            // Stage ≥1（PEG 制导）：已经是世界系速度方向，直接使用
+            local_dir.normalized()
+        };
+
+        self.vessel.body.set_orientation_from_dir(world_dir);
         // 应用制导油门（在 mission_control 之前，让 mission_control 有最终决定权）
         let active_stage = self.vessel.current_stage;
-        self.vessel.set_stage_throttle(active_stage, cmd.throttle);
+        let mut throttle = cmd.throttle;
+        // 滑行阶段（MECO→ICPS点火前）：覆盖油门为 0
+        if self.mission_control.coasting && !self.mission_control.icps_ignited {
+            throttle = 0.0;
+        }
+        // 断油后（圆化完成→TLI前）：覆盖油门为 0
+        if self.mission_control.cutoff_fired && !self.mission_control.tli_started {
+            throttle = 0.0;
+        }
+        self.vessel.set_stage_throttle(active_stage, throttle);
 
-        // MissionControl 更新
+        // TCM-1 覆盖：制导始终输出顺向（PEG stage≥1），但 TCM-1 需要逆向减速
+        // 在引擎燃烧前强制设为逆向朝向
+        if self.mission_control.apogee_tcm_started && !self.mission_control.apogee_tcm_attempted {
+            let tcm_vel = *self.vessel.body.get_velocity();
+            if tcm_vel.length() > 1.0 {
+                self.vessel.body.set_orientation_from_dir(-tcm_vel.normalized());
+            }
+        }
+
+        // 发动机 & 推进剂
+        let ambient_pressure = self.earth.get_atmosphere().get_pressure(altitude);
+        let engine_status = self.vessel.update(dt, ambient_pressure);
+        self.vessel.body.update(dt);
+
+        // MissionControl 更新（阶段转换、遥测、触发器、退出条件检查）
         self.mission_control
             .update(dt, &engine_status, &mut self.vessel, &self.earth);
+
         // 自动级分离：当前级燃料耗尽且有后续级时触发
         // 注意：滑行阶段（coasting=true）不算燃料耗尽，跳过自动级分离
         if engine_status.total_thrust < 1.0
@@ -830,6 +961,26 @@ impl SimulationApp {
                     self.vessel.body.get_mass(),
                     t.thrust_n / 1000.0,
                 );
+                // 显示下一阶段进度
+                if let Some(info) = self.mission_control.compute_next_phase_info(&self.vessel, &self.earth) {
+                    let mut parts: Vec<String> = Vec::new();
+                    for c in &info.conditions {
+                        if c.is_boolean {
+                            let status = if c.is_met { "done" } else { "pending" };
+                            parts.push(format!("{} [{}]", c.label, status));
+                        } else {
+                            let pct = (c.progress * 100.0).min(99.9);
+                            // 对比例类（<10）多显示一位小数
+                            if c.target < 10.0 {
+                                parts.push(format!("{} {:.2}/{:.2} [{:.0}%]", c.label, c.current, c.target, pct));
+                            } else {
+                                parts.push(format!("{} {:.0}/{:.0} [{:.0}%]", c.label, c.current, c.target, pct));
+                            }
+                        }
+                    }
+                    let sep = if info.require_all { " | " } else { " OR " };
+                    println!("  Next → {}: {}", info.next_phase, parts.join(sep));
+                }
                 next_print += print_interval;
             }
         }

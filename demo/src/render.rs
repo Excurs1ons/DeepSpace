@@ -7,8 +7,103 @@ use macroquad::color::Color;
 use macroquad::input::{is_mouse_button_down, mouse_position, mouse_wheel, MouseButton};
 use macroquad::math::{Quat, Vec3};
 use macroquad::models::{draw_line_3d, draw_sphere};
-use macroquad::shapes::draw_line;
-use macroquad::text::draw_text;
+use macroquad::shapes::{draw_line, draw_rectangle};
+use macroquad::text::{draw_text, draw_text_ex, load_ttf_font, Font, TextParams};
+use macroquad::window::{screen_height, screen_width};
+use std::sync::OnceLock;
+
+// =====================================================================
+// 自定义字体
+// =====================================================================
+
+static CUSTOM_FONT: OnceLock<Font> = OnceLock::new();
+
+/// 加载自定义 TTF 字体（在 async main 中调用一次）
+pub async fn load_custom_font(path: &str) {
+    match load_ttf_font(path).await {
+        Ok(font) => {
+            let _ = CUSTOM_FONT.set(font);
+            eprintln!("  Custom font loaded: {}", path);
+        }
+        Err(e) => {
+            eprintln!("  WARNING: failed to load font '{}': {}", path, e);
+        }
+    }
+}
+
+/// 绘制文本（使用自定义字体，若未加载则回退到 macroquad 默认字体）
+pub fn text(text_str: impl AsRef<str>, x: f32, y: f32, font_size: f32, color: Color) {
+    if let Some(font) = CUSTOM_FONT.get() {
+        draw_text_ex(
+            text_str.as_ref(),
+            x,
+            y,
+            TextParams {
+                font: Some(font),
+                font_size: font_size as u16,
+                color,
+                ..Default::default()
+            },
+        );
+    } else {
+        draw_text(text_str.as_ref(), x, y, font_size, color);
+    }
+}
+
+// =====================================================================
+// 滑动轨迹窗口（环形缓冲区）
+// =====================================================================
+
+/// 轨迹环形缓冲区，仅保留最近 N 个点
+pub struct Trail {
+    points: Vec<macroquad::math::Vec3>,
+    cursor: usize,
+    full: bool,
+}
+
+impl Trail {
+    pub fn new(length: usize) -> Self {
+        Self {
+            points: vec![macroquad::math::Vec3::ZERO; length],
+            cursor: 0,
+            full: false,
+        }
+    }
+
+    pub fn push(&mut self, pos: macroquad::math::Vec3) {
+        let len = self.points.len();
+        if len == 0 {
+            return;
+        }
+        self.points[self.cursor] = pos;
+        self.cursor = (self.cursor + 1) % len;
+        if self.cursor == 0 {
+            self.full = true;
+        }
+    }
+
+    /// 返回按时间顺序排列的有效点
+    pub fn points(&self) -> Vec<macroquad::math::Vec3> {
+        if self.full {
+            // cursor 指向下一个要写的位置，所以 [cursor..] 是最老的，[..cursor] 是最新的
+            let (newest, oldest) = self.points.split_at(self.cursor);
+            [oldest, newest].concat()
+        } else {
+            self.points[..self.cursor].to_vec()
+        }
+    }
+}
+
+// =====================================================================
+// UI 缩放：以 2560×1440 为参考分辨率
+// =====================================================================
+
+/// 返回 UI 缩放系数，基于当前窗口尺寸自动适配
+pub fn ui_scale() -> f32 {
+    let sx = screen_width() / 1920.0;
+    let sy = screen_height() / 1080.0;
+    sx.min(sy).clamp(0.3, 4.0)
+}
 
 // =====================================================================
 // 轨道相机
@@ -180,9 +275,9 @@ pub const COLOR_GIZMO_X: Color = Color::new(1.0, 0.2, 0.2, 1.0);
 pub const COLOR_GIZMO_Y: Color = Color::new(0.2, 1.0, 0.2, 1.0);
 pub const COLOR_GIZMO_Z: Color = Color::new(0.2, 0.2, 1.0, 1.0);
 pub const COLOR_TRAJECTORY: Color = Color::new(0.3, 0.8, 1.0, 0.8);
-pub const COLOR_PREDICTION: Color = Color::new(0.3, 0.8, 1.0, 0.25);
-pub const COLOR_GRID: Color = Color::new(0.15, 0.18, 0.25, 0.5);
-pub const COLOR_GRID_AXIS: Color = Color::new(0.25, 0.3, 0.4, 0.6);
+pub const COLOR_PREDICTION: Color = Color::new(1.0, 0.65, 0.1, 0.5); // 橙金色，与轨迹青蓝区分
+pub const COLOR_GRID: Color = Color::new(0.25, 0.30, 0.40, 0.55);
+pub const COLOR_GRID_AXIS: Color = Color::new(0.45, 0.55, 0.70, 0.75);
 pub const COLOR_GROUND: Color = Color::new(0.3, 0.3, 0.4, 1.0);
 
 // =====================================================================
@@ -247,6 +342,7 @@ pub fn draw_velocity_arrow(pos: Vec3, vel: Vec3, scale: f32) {
 ///
 /// - `pos`, `vel`: 当前状态（惯性系，Y-up）
 /// - `mu`: 中心天体标准引力参数 (m³/s²)
+/// - `perturbers`: 摄动天体列表 (位置, 质量)，如月球
 /// - `duration`: 预测时长 (s)
 /// - `num_points`: 采样点数（决定线条平滑度）
 /// - `earth_radius`: 若 > 0，轨迹进入地表以下时截断（避免穿透地球）
@@ -255,6 +351,7 @@ pub fn predict_trajectory(
     pos: deepspace::Vec3,
     vel: deepspace::Vec3,
     mu: f64,
+    perturbers: &[(deepspace::Vec3, f64)],
     duration: f64,
     num_points: usize,
     earth_radius: f64,
@@ -266,7 +363,7 @@ pub fn predict_trajectory(
     points.push(pos);
 
     for _ in 1..n {
-        s = rk4_twobody(&s, mu, dt);
+        s = rk4_nbody(&s, mu, perturbers, dt);
         let p = deepspace::Vec3::new(s[0], s[1], s[2]);
         // 截断：进入地表以下则停止
         if earth_radius > 0.0 && p.length() < earth_radius {
@@ -277,16 +374,34 @@ pub fn predict_trajectory(
     points
 }
 
-/// RK4 单步（二体引力）
-fn rk4_twobody(s: &[f64; 6], mu: f64, dt: f64) -> [f64; 6] {
+/// RK4 单步（N体引力：中心天体 + 摄动体）
+fn rk4_nbody(s: &[f64; 6], mu: f64, perturbers: &[(deepspace::Vec3, f64)], dt: f64) -> [f64; 6] {
     let deriv = |y: &[f64; 6]| -> [f64; 6] {
         let r2 = y[0] * y[0] + y[1] * y[1] + y[2] * y[2];
+        let mut ax = 0.0;
+        let mut ay = 0.0;
+        let mut az = 0.0;
         if r2 > 0.0 {
             let a = -mu / (r2 * r2.sqrt());
-            [y[3], y[4], y[5], y[0] * a, y[1] * a, y[2] * a]
-        } else {
-            [y[3], y[4], y[5], 0.0, 0.0, 0.0]
+            ax = y[0] * a;
+            ay = y[1] * a;
+            az = y[2] * a;
         }
+        // 摄动体引力
+        let g = deepspace::G;
+        for (ppos, pmass) in perturbers {
+            let dx = ppos.x - y[0];
+            let dy = ppos.y - y[1];
+            let dz = ppos.z - y[2];
+            let d2 = dx * dx + dy * dy + dz * dz;
+            if d2 > 0.0 {
+                let acc = g * pmass / (d2 * d2.sqrt());
+                ax += dx * acc;
+                ay += dy * acc;
+                az += dz * acc;
+            }
+        }
+        [y[3], y[4], y[5], ax, ay, az]
     };
 
     let k1 = deriv(s);
@@ -388,6 +503,7 @@ pub fn draw_attitude_indicator_2d(
     cam_eye: Vec3,
     cam_target: Vec3,
 ) {
+    let s = ui_scale();
     let cam_fwd = (cam_target - cam_eye).normalize();
     // 用世界 Y 作为参考上方向，计算相机右/上向量
     let cam_right = cam_fwd.cross(Vec3::Y).normalize();
@@ -425,7 +541,7 @@ pub fn draw_attitude_indicator_2d(
         draw_line(cx, cy, ex, ey, 2.0, c);
 
         // 轴标签
-        draw_text(label, ex - 5.0, ey - 5.0, 11.0, c);
+        text(label, ex - 5.0 * s, ey - 5.0 * s, 18.0 * s, c);
     }
 }
 
@@ -469,26 +585,31 @@ pub fn draw_earth_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32
     draw_line(cx, cy - cross, cx, cy + cross, 1.0, COLOR_EARTH);
 }
 
-/// 投影绘制空间参考网格
+/// 投影绘制经纬线网格 + 坐标轴
 ///
-/// 将 3D 赤道面同心环 + 辐条 + 坐标轴投影到 2D 屏幕。
-/// 旋转相机时呈现不同剖面（椭圆/线）。
+/// 纬线（平行圈）：在不同纬度上绕 Y 轴的水平圆
+/// 经线（子午线）：从南极到北极的垂直弧
 pub fn draw_grid_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32) {
-    const RINGS: [f32; 5] = [1.5, 2.0, 3.0, 5.0, 10.0];
-    const SPOKES: u32 = 12;
+    let s = ui_scale();
+    const LATITUDES: [f32; 5] = [0.0, 30.0, 60.0, -30.0, -60.0];
+    const MERIDIANS: u32 = 12;
     const CENTER: Vec3 = Vec3::ZERO;
 
-    // 1. 同心环投影到 2D（自适应分段）
-    for &mult in &RINGS {
-        let r = earth_radius * mult;
-        // 根据投影后的像素半径决定分段数，保证视觉平滑
+    // 1. 纬线（平行圈）
+    for &lat_deg in &LATITUDES {
+        let lat = lat_deg.to_radians();
+        let r = earth_radius * lat.cos();       // 平行圈半径
+        let y = earth_radius * lat.sin();       // 平行圈高度
         let pixel_r = camera.len_to_px(r, sw, sh);
         let segs = (12.0 + pixel_r * 0.3).min(256.0) as u32;
+        if segs < 4 {
+            continue;
+        }
         let step = std::f32::consts::TAU / segs as f32;
         let mut prev = None;
         for i in 0..=segs {
             let a = ((i % segs) as f32) * step;
-            let p3d = CENTER + Vec3::new(a.cos() * r, 0.0, a.sin() * r);
+            let p3d = Vec3::new(a.cos() * r, y, a.sin() * r);
             let (x, y) = camera.project_2d(p3d, sw, sh);
             if let Some((px, py)) = prev {
                 draw_line(px, py, x, y, 1.0, COLOR_GRID);
@@ -497,18 +618,29 @@ pub fn draw_grid_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32)
         }
     }
 
-    // 2. 径向辐条
-    let max_r = earth_radius * 10.0;
-    let (cx, cy) = camera.project_2d(CENTER, sw, sh);
-    for i in 0..SPOKES {
-        let a = (i as f32 / SPOKES as f32) * std::f32::consts::TAU;
-        let end = CENTER + Vec3::new(a.cos() * max_r, 0.0, a.sin() * max_r);
-        let (ex, ey) = camera.project_2d(end, sw, sh);
-        draw_line(cx, cy, ex, ey, 1.0, COLOR_GRID);
+    // 2. 经线（子午线）
+    for i in 0..MERIDIANS {
+        let lon = (i as f32 / MERIDIANS as f32) * std::f32::consts::TAU;
+        let segs = 64u32;
+        let step = std::f32::consts::PI / segs as f32;
+        let mut prev = None;
+        for j in 0..=segs {
+            let theta = (j as f32) * step - std::f32::consts::FRAC_PI_2; // -90° → 90°
+            let p3d = Vec3::new(
+                earth_radius * theta.cos() * lon.cos(),
+                earth_radius * theta.sin(),
+                earth_radius * theta.cos() * lon.sin(),
+            );
+            let (x, y) = camera.project_2d(p3d, sw, sh);
+            if let Some((px, py)) = prev {
+                draw_line(px, py, x, y, 1.0, COLOR_GRID);
+            }
+            prev = Some((x, y));
+        }
     }
 
     // 3. 坐标轴线
-    let a_len = earth_radius * 12.0;
+    let a_len = earth_radius * 1.8;
     let xp = camera.project_2d(CENTER + Vec3::X * a_len, sw, sh);
     let xn = camera.project_2d(CENTER - Vec3::X * a_len, sw, sh);
     draw_line(xn.0, xn.1, xp.0, xp.1, 1.5, COLOR_GRID_AXIS);
@@ -522,9 +654,9 @@ pub fn draw_grid_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32)
     draw_line(zn.0, zn.1, zp.0, zp.1, 1.5, COLOR_GRID_AXIS);
 
     // 轴标签
-    draw_text("X", xp.0 + 3.0, xp.1 - 3.0, 10.0, COLOR_GRID_AXIS);
-    draw_text("Y", yp.0 + 3.0, yp.1 - 3.0, 10.0, COLOR_GRID_AXIS);
-    draw_text("Z", zp.0 + 3.0, zp.1 - 3.0, 10.0, COLOR_GRID_AXIS);
+    text("X", xp.0 + 5.0 * s, xp.1 - 5.0 * s, 18.0 * s, COLOR_GRID_AXIS);
+    text("Y", yp.0 + 5.0 * s, yp.1 - 5.0 * s, 18.0 * s, COLOR_GRID_AXIS);
+    text("Z", zp.0 + 5.0 * s, zp.1 - 5.0 * s, 18.0 * s, COLOR_GRID_AXIS);
 }
 
 /// 投影绘制 2D 轨迹线
@@ -675,57 +807,67 @@ const ARTEMIS_PHASES: &[&str] = &[
 ];
 
 /// Artemis II 具体任务里程碑（细粒度事件步骤）
-const ARTEMIS_TASKS: &[&str] = &[
-    "Liftoff",
-    "SRB Separation",
-    "MaxQ",
-    "MECO / Staging",
-    "ICPS Circularization",
-    "TLI Burn",
-    "Orion Separation",
-    "Lunar Flyby",
-    "Return Cruise",
-    "SM Separation",
-    "Reentry",
-    "Splashdown",
-];
 
-/// 任务显示状态（由火箭-sim 主循环计算后传入）
+/// 任务显示状态（由 3D 主循环计算后传入）
 pub struct MissionDisplayState {
-    /// 当前阶段在 ARTEMIS_PHASES 中的索引
-    pub phase_idx: Option<usize>,
-    /// 已完成的任务数（0..=ARTEMIS_TASKS.len）
-    pub tasks_done: usize,
-    /// 当前高亮任务（正在执行的那一步）
-    pub task_highlight: Option<usize>,
+    /// 数据驱动阶段名（直接来自 MissionControl.phase_name）
+    pub phase_name: String,
     /// 是否已完成
     pub complete: bool,
     /// 结果字符串（SUCCESS/FAILURE/ABORT/TIMEOUT）
     pub outcome: String,
 }
 
-/// 绘制阶段时间线面板（粗粒度，右侧上方）
-pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
-    let line_h = 18.0;
+/// 将数据驱动阶段名映射到 ARTEMIS_PHASES 索引（用于可视时间轴标记）
+fn phase_to_idx(name: &str) -> Option<usize> {
+    // 严格匹配数据驱动阶段名，不做时间/距离启发式
+    match name {
+        "PreLaunch" => Some(0),                        // PRE_LAUNCH
+        "Launch" => Some(1),                           // LAUNCH
+        "Ascent" | "MaxQ" => Some(2),                  // ASCENT
+        "Orbit" | "Staging" | "Coast" | "Circularization" => Some(3), // ORBIT
+        "TEI" => Some(4),                              // TLI
+        "Translunar" | "MissionEvents" => Some(5),     // TRANSLUNAR（去程统称）
+        "Reentry" => Some(8),                          // REENTRY
+        "Success" | "Failure" | "Abort" => Some(9),    // SUCCESS
+        _ => None,  // 不认识的新阶段名 → 不标记
+    }
+}
 
-    draw_text("PHASE", x, y, 14.0, Color::new(0.6, 0.7, 0.9, 0.8));
+/// 绘制阶段面板（右侧上方）
+pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
+    let s = ui_scale();
+    let line_h = 30.0 * s;
+    let item_start_y = y + 32.0 * s;
+    let panel_w = 260.0 * s;
+    let n_phases = ARTEMIS_PHASES.len() as f32;
+    let content_h = (item_start_y - y) + n_phases * line_h + 12.0 * s;
+
+    // 半透明背景
+    draw_rectangle(x - 8.0 * s, y - 28.0 * s, panel_w + 16.0 * s, content_h + 8.0 * s,
+        Color::new(0.05, 0.05, 0.1, 0.75));
+
+    // 标题 + 当前实际阶段名
+    text("PHASE", x, y, 24.0 * s, Color::new(0.7, 0.8, 1.0, 0.95));
+    text(&state.phase_name, x + 56.0 * s, y, 20.0 * s, Color::new(1.0, 0.9, 0.2, 1.0));
+
+    let current_idx = phase_to_idx(&state.phase_name);
 
     for (i, &name) in ARTEMIS_PHASES.iter().enumerate() {
-        let py = y + 6.0 + i as f32 * line_h;
+        let py = item_start_y + i as f32 * line_h;
 
         let (icon, color) = if state.complete {
-            // 任务结束：全部灰化，仅结果高亮
-            ("\u{2713}", Color::new(0.3, 0.4, 0.4, 0.5))
-        } else if state.phase_idx.map_or(false, |c| i < c) {
-            ("\u{2713}", Color::new(0.4, 0.5, 0.5, 0.5)) // ✓ 已完成
-        } else if state.phase_idx.map_or(false, |c| i == c) {
-            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0)) // ▶ 当前
+            ("\u{2713}", Color::new(0.4, 0.6, 0.6, 0.7))
+        } else if current_idx.map_or(false, |c| i < c) {
+            ("\u{2713}", Color::new(0.5, 0.7, 0.7, 0.7))
+        } else if current_idx.map_or(false, |c| i == c) {
+            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0))
         } else {
-            ("\u{25CB}", Color::new(0.3, 0.3, 0.4, 0.6)) // ○ 待执行
+            ("\u{25CB}", Color::new(0.5, 0.5, 0.6, 0.8))
         };
 
-        draw_text(icon, x, py, 12.0, color);
-        draw_text(name, x + 16.0, py, 12.0, color);
+        text(icon, x, py, 20.0 * s, color);
+        text(name, x + 24.0 * s, py, 20.0 * s, color);
     }
 
     if state.complete {
@@ -734,38 +876,258 @@ pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
             "FAILURE" => Color::new(1.0, 0.2, 0.2, 1.0),
             _ => Color::new(1.0, 0.8, 0.2, 1.0),
         };
-        draw_text(
+        text(
             &format!("OUTCOME: {}", state.outcome),
             x,
-            y + 6.0 + ARTEMIS_PHASES.len() as f32 * line_h + 4.0,
-            14.0,
+            item_start_y + n_phases * line_h + 6.0 * s,
+            22.0 * s,
             rc,
         );
     }
 }
 
 /// 绘制任务里程碑面板（细粒度，右侧下方）
-pub fn draw_task_panel(state: &MissionDisplayState, x: f32, y: f32) {
-    let line_h = 16.0;
+// =====================================================================
+// 后续阶段进度面板（数据驱动）
+// =====================================================================
 
-    draw_text("TASKS", x, y, 14.0, Color::new(0.6, 0.7, 0.9, 0.8));
+/// 绘制所有后续阶段转换面板
+pub fn draw_remaining_phases_panel(phases: &[NextPhaseDisplay], x: f32, y: f32) {
+    let s = ui_scale();
+    let panel_w = 280.0 * s;
+    let header_h = 40.0 * s;
+    let phase_sep = 8.0 * s;
 
-    for (i, &name) in ARTEMIS_TASKS.iter().enumerate() {
-        let py = y + 6.0 + i as f32 * line_h;
+    // 计算总高度
+    let mut total_h = header_h;
+    for phase in phases {
+        total_h += 28.0 * s; // 阶段标题行
+        total_h += phase
+            .conditions
+            .iter()
+            .map(|c| if c.is_boolean { 22.0 * s } else { 38.0 * s })
+            .sum::<f32>();
+        total_h += phase_sep;
+    }
+    total_h += 8.0 * s;
 
-        let done = i < state.tasks_done;
-        let active = state.task_highlight.map_or(false, |h| i == h);
+    // 半透明背景
+    draw_rectangle(
+        x - 8.0 * s,
+        y - 26.0 * s,
+        panel_w + 16.0 * s,
+        total_h,
+        Color::new(0.05, 0.05, 0.1, 0.75),
+    );
 
-        let (icon, color) = if done {
-            ("\u{2713}", Color::new(0.35, 0.45, 0.45, 0.5)) // ✓ 已完成
-        } else if active {
-            ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0)) // ▶ 执行中
+    text("UPCOMING PHASES", x, y, 22.0 * s, Color::new(0.7, 0.8, 1.0, 0.95));
+
+    let mut cy = y + header_h;
+
+    for phase in phases {
+        // 阶段名 + 逻辑（ALL/ANY）
+        let logic = if phase.require_all { "ALL" } else { "ANY" };
+        text(
+            &phase.next_phase,
+            x + 4.0 * s,
+            cy,
+            20.0 * s,
+            Color::new(1.0, 0.9, 0.2, 1.0),
+        );
+        text(
+            logic,
+            x + panel_w - 30.0 * s,
+            cy,
+            12.0 * s,
+            Color::new(0.4, 0.5, 0.6, 0.6),
+        );
+        cy += 24.0 * s;
+
+        // 分隔线
+        draw_line(
+            x,
+            cy - 6.0 * s,
+            x + panel_w,
+            cy - 6.0 * s,
+            1.0,
+            Color::new(0.5, 0.5, 0.6, 0.3),
+        );
+
+        for cond in &phase.conditions {
+            if cond.is_boolean {
+                let (icon, color) = if cond.is_met {
+                    ("\u{2713}", Color::new(0.3, 0.9, 0.3, 1.0))
+                } else {
+                    ("\u{25CB}", Color::new(0.6, 0.6, 0.7, 0.8))
+                };
+                text(icon, x + 4.0 * s, cy, 16.0 * s, color);
+                text(&cond.label, x + 24.0 * s, cy, 16.0 * s, color);
+                cy += 22.0 * s;
+            } else {
+                // 非布尔条件：标签 + 进度条
+                let pct = (cond.progress * 100.0).min(99.9);
+                let (icon, color) = if cond.is_met {
+                    ("\u{2713}", Color::new(0.3, 0.9, 0.3, 1.0))
+                } else {
+                    ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0))
+                };
+                text(icon, x + 4.0 * s, cy, 16.0 * s, color);
+                text(
+                    &format!("{} {:.0}/{:.0} [{:.0}%]", cond.label, cond.current, cond.target, pct),
+                    x + 24.0 * s,
+                    cy,
+                    14.0 * s,
+                    color,
+                );
+                cy += 18.0 * s;
+
+                // 进度条
+                let bar_w = panel_w - 28.0 * s;
+                let bar_h = 6.0 * s;
+                draw_rectangle(
+                    x + 24.0 * s,
+                    cy,
+                    bar_w,
+                    bar_h,
+                    Color::new(0.2, 0.2, 0.3, 0.8),
+                );
+                let fill = (bar_w * cond.progress as f32).min(bar_w).max(0.0);
+                let bar_color = if cond.is_met {
+                    Color::new(0.3, 0.9, 0.3, 0.9)
+                } else {
+                    Color::new(1.0, 0.9, 0.2, 0.9)
+                };
+                draw_rectangle(x + 24.0 * s, cy, fill, bar_h, bar_color);
+                cy += 22.0 * s;
+            }
+        }
+
+        cy += phase_sep;
+    }
+}
+
+/// 下一阶段条件的 UI 显示数据
+pub struct NextPhaseConditionDisplay {
+    pub label: String,
+    pub current: f64,
+    pub target: f64,
+    pub progress: f64,
+    pub is_met: bool,
+    pub is_boolean: bool,
+}
+
+/// 下一阶段进度 UI 显示数据
+pub struct NextPhaseDisplay {
+    pub next_phase: String,
+    pub conditions: Vec<NextPhaseConditionDisplay>,
+    pub require_all: bool,
+}
+
+/// 绘制下一阶段进度面板（右侧，任务面板下方）
+pub fn draw_next_phase_panel(state: &NextPhaseDisplay, x: f32, y: f32) {
+    let s = ui_scale();
+    let panel_w = 190.0 * s;
+
+    // 先计算总高度
+    let header_h = 40.0 * s;
+    let line_h = 24.0 * s;
+    let cond_h: f32 = state.conditions.iter().map(|c|
+        if c.is_boolean { line_h } else { 44.0 * s }
+    ).sum();
+    let content_h = header_h + 4.0 * s + cond_h + 8.0 * s;
+
+    // 半透明背景
+    draw_rectangle(x - 8.0 * s, y - 26.0 * s, panel_w + 16.0 * s, content_h + 8.0 * s,
+        Color::new(0.05, 0.05, 0.1, 0.75));
+
+    // 标题
+    text("NEXT", x, y, 22.0 * s, Color::new(0.7, 0.8, 1.0, 0.95));
+
+    // 下一阶段名
+    text(
+        &state.next_phase,
+        x + 4.0 * s,
+        y + 24.0 * s,
+        20.0 * s,
+        Color::new(1.0, 0.9, 0.2, 1.0),
+    );
+
+    // 条件逻辑提示（ALL / ANY）
+    let logic = if state.require_all { "ALL" } else { "ANY" };
+    text(
+        logic,
+        x + panel_w - 30.0 * s,
+        y + 24.0 * s,
+        12.0 * s,
+        Color::new(0.4, 0.5, 0.6, 0.6),
+    );
+
+    // 分隔线
+    draw_line(
+        x,
+        y + 32.0 * s,
+        x + panel_w,
+        y + 32.0 * s,
+        1.0,
+        Color::new(0.5, 0.5, 0.6, 0.5),
+    );
+
+    let mut cy = y + 44.0 * s;
+    let line_h = 24.0 * s;
+
+    for cond in &state.conditions {
+        if cond.is_boolean {
+            // 布尔条件：显示标签 + 图标
+            let (icon, color) = if cond.is_met {
+                ("\u{2713}", Color::new(0.3, 0.9, 0.3, 1.0)) // ✓
+            } else {
+                ("\u{25CB}", Color::new(0.6, 0.6, 0.7, 0.8)) // ○
+            };
+            text(icon, x, cy, 18.0 * s, color);
+            text(&cond.label, x + 20.0 * s, cy, 18.0 * s, color);
+            cy += line_h;
         } else {
-            ("\u{25CB}", Color::new(0.25, 0.25, 0.35, 0.5)) // ○ 待执行
-        };
+            // 数值条件：显示标签 + 数值 + 进度条
+            let label_color = if cond.is_met {
+                Color::new(0.3, 0.9, 0.3, 1.0)
+            } else {
+                Color::new(0.8, 0.8, 0.9, 0.9)
+            };
+            text(&cond.label, x, cy, 16.0 * s, label_color);
 
-        draw_text(icon, x, py, 11.0, color);
-        draw_text(name, x + 14.0, py, 11.0, color);
+            // 数值 (current / target)
+            let val_text = if cond.target < 10.0 {
+                format!("{:.2}/{:.2}", cond.current, cond.target)
+            } else {
+                format!("{:.0}/{:.0}", cond.current, cond.target)
+            };
+            let pct = (cond.progress * 100.0).min(99.9) as u32;
+            let info = format!("{}  {}%", val_text, pct);
+            text(
+                &info,
+                x,
+                cy + 16.0 * s,
+                14.0 * s,
+                Color::new(0.6, 0.7, 0.8, 0.9),
+            );
+
+            // 进度条背景
+            let bar_y = cy + 28.0 * s;
+            let bar_w = panel_w;
+            let bar_h = 6.0 * s;
+            draw_rectangle(x, bar_y, bar_w, bar_h, Color::new(0.2, 0.2, 0.3, 0.7));
+
+            // 进度条填充
+            let fill_w = (bar_w * cond.progress as f32).min(bar_w);
+            let fill_color = if cond.is_met {
+                Color::new(0.3, 0.9, 0.3, 0.8)
+            } else {
+                Color::new(0.4, 0.6, 0.9, 0.8)
+            };
+            draw_rectangle(x, bar_y, fill_w, bar_h, fill_color);
+
+            cy += 44.0 * s;
+        }
     }
 }
 

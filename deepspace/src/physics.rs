@@ -78,8 +78,10 @@ impl PhysicsBody {
     }
 
     pub fn set_orientation_from_dir(&mut self, dir: Vec3) {
-        let angle = -dir.x.atan2(dir.y);
-        self.orientation = Quaternion::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), angle);
+        self.orientation = Quaternion::rotation_between(
+            &Vec3::new(0.0, 1.0, 0.0),
+            &dir.normalized(),
+        );
     }
     pub fn get_orientation(&self) -> &Quaternion {
         &self.orientation
