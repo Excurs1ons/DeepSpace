@@ -143,11 +143,7 @@ DeepSpace/
 │           └── nbody-sim.rs      # N 体沙盘入口
 ├── missions/                     # 任务配置文件 (.conf)
 │   ├── artemis2.conf             # Artemis II 月球飞越（基准任务）
-│   ├── columbia.conf             # 哥伦比亚号 STS-107 泡沫撞击情景
-│   ├── columbia_reentry_test.conf
-│   ├── columbia_test.conf
-│   ├── artemis2_columbia_breach.conf
-│   └── artemis2_columbia_damage.conf
+│   └── columbia.conf             # 哥伦比亚号 STS-107 泡沫撞击情景
 └── scenes/                       # N 体场景文件 (.scene)
     ├── solar_system.scene        # 太阳 + 水金地火
     ├── three_body.scene          # 恒星 + 2 行星
