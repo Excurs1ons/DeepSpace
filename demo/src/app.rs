@@ -618,6 +618,10 @@ impl SimulationApp {
         }
 
         let earth = bodies[0].clone();
+        // DistanceToMoonBelow 按"距月面"口径：注入第二天体半径（配置驱动）
+        if bodies.len() > 1 {
+            mission_control.moon_radius = bodies[1].get_radius();
+        }
 
         SimulationApp {
             vessel,
@@ -874,14 +878,40 @@ impl SimulationApp {
             }
         }
 
+        // TLI 拦截燃烧覆盖：按 Lambert 目标方向定向（覆盖制导的速度方向）
+        if self.mission_control.tli_started
+            && !self.mission_control.tli_complete
+            && self.mission_control.tli_has_target
+        {
+            self.vessel
+                .body
+                .set_orientation_from_dir(self.mission_control.tli_target_dir);
+        }
+
         // 发动机 & 推进剂
         let ambient_pressure = self.earth.get_atmosphere().get_pressure(altitude);
         let engine_status = self.vessel.update(dt, ambient_pressure);
         self.vessel.body.update(dt);
 
         // MissionControl 更新（阶段转换、遥测、触发器、退出条件检查）
-        self.mission_control
-            .update(dt, &engine_status, &mut self.vessel, &self.earth);
+        let moon_pos = if self.body_positions.len() > 1 {
+            self.body_positions[1]
+        } else {
+            Vec3::zero()
+        };
+        let moon_vel = if self.body_velocities.len() > 1 {
+            self.body_velocities[1]
+        } else {
+            Vec3::zero()
+        };
+        self.mission_control.update(
+            dt,
+            &engine_status,
+            &mut self.vessel,
+            &self.earth,
+            moon_pos,
+            moon_vel,
+        );
 
         // 自动级分离：当前级燃料耗尽且有后续级时触发
         // 注意：滑行阶段（coasting=true）不算燃料耗尽，跳过自动级分离
@@ -962,7 +992,7 @@ impl SimulationApp {
                     t.thrust_n / 1000.0,
                 );
                 // 显示下一阶段进度
-                if let Some(info) = self.mission_control.compute_next_phase_info(&self.vessel, &self.earth) {
+                if let Some(info) = self.mission_control.compute_next_phase_info(&self.vessel, &self.earth, self.moon_position()) {
                     let mut parts: Vec<String> = Vec::new();
                     for c in &info.conditions {
                         if c.is_boolean {
