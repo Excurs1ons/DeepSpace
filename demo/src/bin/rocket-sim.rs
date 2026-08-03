@@ -359,8 +359,8 @@ async fn viz_main(args: CliArgs) {
 		        let current_phase = mc.phase_name.clone();
 	
 		        // 收集所有后续阶段转换的进度（从真实配置读取）
-		        let remaining_phases: Vec<NextPhaseDisplay> = mc
-		            .compute_all_remaining_phases(&app.vessel, &app.earth)
+	        let remaining_phases: Vec<NextPhaseDisplay> = mc
+	            .compute_all_remaining_phases(&app.vessel, &app.earth, app.moon_position())
 		            .iter()
 		            .map(|info| {
 		                let conditions: Vec<NextPhaseConditionDisplay> = info

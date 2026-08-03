@@ -2,7 +2,7 @@
 
 use crate::environment::Planet;
 use crate::physics::OrbitalMechanics;
-use crate::vessel::{EngineStatus, Vessel};
+use crate::vessel::{EngineStatus, PartKind, Vessel};
 use crate::Vec3;
 
 // =====================================================================
@@ -127,6 +127,8 @@ pub enum TriggerType {
     FlagIsTrue,
     /// 运行时标志 (parameter) 为 false
     FlagIsFalse,
+    /// 与第二天体（月球）的距离低于 value（米）— 月球接近段结束条件
+    DistanceToMoonBelow,
 }
 
 #[derive(Debug, Clone)]
@@ -1567,6 +1569,7 @@ fn parse_trigger_type(s: &str) -> TriggerType {
         "OrbitCircularized" => TriggerType::OrbitCircularized,
         "ApoapsisAbove" => TriggerType::ApoapsisAbove,
         "PeriapsisAbove" => TriggerType::PeriapsisAbove,
+        "DistanceToMoonBelow" => TriggerType::DistanceToMoonBelow,
         _ => {
             eprintln!("  Warning: unknown TriggerType '{}', using TimeElapsed", s);
             TriggerType::TimeElapsed
@@ -1637,6 +1640,22 @@ pub struct MissionControl {
 
     /// TCM 目标 Δv（从配置加载）
     pub tcm_target_dv: f64,
+
+    /// 第二天体（月球）半径（米）— DistanceToMoonBelow 按"距月面"口径判定，
+    /// 由 app 层从 [body.Moon].radius 配置注入，默认真实月球半径
+    pub moon_radius: f64,
+
+    // ---- TLI 拦截制导（Lambert 窗口搜索替代写死点火时间） ----
+    /// 目标燃烧方向（单位向量，来自当前 Lambert 解）
+    pub tli_target_dir: Vec3,
+    /// 燃烧结束时的目标速度大小 (m/s)
+    pub tli_target_speed: f64,
+    /// 是否持有有效拦截解（false = 兜底远地点抬升）
+    pub tli_has_target: bool,
+    /// 窗口搜索期间见过的最低 Δv (m/s)
+    pub tli_best_dv: f64,
+    /// 窗口搜索进度上报节流（上次上报时刻）
+    pub tli_last_search_report: f64,
 }
 
 impl MissionControl {
@@ -1678,6 +1697,12 @@ impl MissionControl {
             phase_entry_velocity: 0.0,
             flags: HashMap::new(),
             tcm_target_dv: -200.0,
+            moon_radius: 1_737_400.0,
+            tli_target_dir: Vec3::zero(),
+            tli_target_speed: 0.0,
+            tli_has_target: false,
+            tli_best_dv: f64::INFINITY,
+            tli_last_search_report: -1e18,
         }
     }
 
@@ -1717,6 +1742,11 @@ impl MissionControl {
         self.phase_entry_altitude = 0.0;
         self.phase_entry_velocity = 0.0;
         self.flags.clear();
+        self.tli_target_dir = Vec3::zero();
+        self.tli_target_speed = 0.0;
+        self.tli_has_target = false;
+        self.tli_best_dv = f64::INFINITY;
+        self.tli_last_search_report = -1e18;
     }
 
     pub fn update(
@@ -1725,6 +1755,8 @@ impl MissionControl {
         engine_status: &EngineStatus,
         vessel: &mut Vessel,
         earth: &Planet,
+        moon_pos: Vec3,
+        moon_vel: Vec3,
     ) {
         if self.outcome != MissionOutcome::InProgress {
             return;
@@ -1736,8 +1768,8 @@ impl MissionControl {
         self.mission_time += dt;
         self.last_engine_status = engine_status.clone();
 
-        self.update_phase(vessel, earth);
-        self.handle_phase_behavior(vessel, earth);
+        self.update_phase(vessel, earth, moon_pos);
+        self.handle_phase_behavior(vessel, earth, moon_pos, moon_vel);
         self.update_telemetry(vessel, earth);
 
         let commands = self.trigger_system.check_triggers(
@@ -1755,7 +1787,7 @@ impl MissionControl {
     }
 
     /// 数据驱动的阶段转换引擎
-    fn update_phase(&mut self, vessel: &Vessel, earth: &Planet) {
+    fn update_phase(&mut self, vessel: &Vessel, earth: &Planet, moon_pos: Vec3) {
         for transition in self.script.phase_transitions.clone() {
             if transition.from != self.phase_name {
                 continue;
@@ -1765,7 +1797,7 @@ impl MissionControl {
             let mut any_ok = !transition.require_all;
 
             for cond in &transition.conditions {
-                let met = self.evaluate_condition(cond, vessel, earth);
+                let met = self.evaluate_condition(cond, vessel, earth, moon_pos);
                 if transition.require_all {
                     if !met {
                         all_ok = false;
@@ -1798,7 +1830,13 @@ impl MissionControl {
     }
 
     /// 评估单个触发条件（数据驱动版本，使用完整的 MissionControl 上下文）
-    fn evaluate_condition(&self, cond: &TriggerCondition, vessel: &Vessel, earth: &Planet) -> bool {
+    fn evaluate_condition(
+        &self,
+        cond: &TriggerCondition,
+        vessel: &Vessel,
+        earth: &Planet,
+        moon_pos: Vec3,
+    ) -> bool {
         let altitude = self.get_current_altitude(vessel, earth);
         let velocity = self.get_current_velocity(vessel);
         let _orbital_vel = OrbitalMechanics::circular_orbit_velocity(altitude, earth);
@@ -1806,6 +1844,7 @@ impl MissionControl {
         let earth_mass = earth.get_mass();
         let earth_radius = earth.get_radius();
         let v_orbital = (grav_const * earth_mass / (earth_radius + altitude)).sqrt();
+        let pos = *vessel.body.get_position();
 
         match cond.trigger_type {
             TriggerType::TimeElapsed => self.mission_time >= cond.value,
@@ -1813,6 +1852,10 @@ impl MissionControl {
             TriggerType::AltitudeBelow => altitude < cond.value,
             TriggerType::VelocityAbove => velocity > cond.value,
             TriggerType::VelocityBelow => velocity < cond.value,
+            TriggerType::DistanceToMoonBelow => {
+                let dist = (moon_pos - pos).length() - self.moon_radius;
+                dist < cond.value
+            }
             TriggerType::VelocityRatioAbove => velocity > v_orbital * cond.value,
             TriggerType::VelocityRatioBelow => velocity < v_orbital * cond.value,
             TriggerType::TimeSincePhaseAbove => {
@@ -1852,14 +1895,24 @@ impl MissionControl {
     }
 
     /// 计算当前阶段到下一阶段的进度（用于实时展示）
-    pub fn compute_next_phase_info(&self, vessel: &Vessel, earth: &Planet) -> Option<NextPhaseInfo> {
+    pub fn compute_next_phase_info(
+        &self,
+        vessel: &Vessel,
+        earth: &Planet,
+        moon_pos: Vec3,
+    ) -> Option<NextPhaseInfo> {
         let transition = self.script.phase_transitions.iter()
             .find(|t| t.from == self.phase_name)?;
-        self.compute_next_phase_info_for_transition(transition, vessel, earth)
+        self.compute_next_phase_info_for_transition(transition, vessel, earth, moon_pos)
     }
 
     /// 获取所有后续阶段转换的进度信息（用于 UI 面板）
-    pub fn compute_all_remaining_phases(&self, vessel: &Vessel, earth: &Planet) -> Vec<NextPhaseInfo> {
+    pub fn compute_all_remaining_phases(
+        &self,
+        vessel: &Vessel,
+        earth: &Planet,
+        moon_pos: Vec3,
+    ) -> Vec<NextPhaseInfo> {
         let mut result = Vec::new();
         let mut current: String = self.phase_name.clone();
         // 最多追踪 10 个后续阶段，防止无限循环
@@ -1869,7 +1922,7 @@ impl MissionControl {
                 .find(|t| t.from == next);
             match transition {
                 Some(t) => {
-                    if let Some(info) = self.compute_next_phase_info_for_transition(t, vessel, earth) {
+                    if let Some(info) = self.compute_next_phase_info_for_transition(t, vessel, earth, moon_pos) {
                         current = info.next_phase.clone();
                         result.push(info);
                     } else {
@@ -1888,6 +1941,7 @@ impl MissionControl {
         transition: &PhaseTransition,
         vessel: &Vessel,
         earth: &Planet,
+        moon_pos: Vec3,
     ) -> Option<NextPhaseInfo> {
         let altitude = self.get_current_altitude(vessel, earth);
         let velocity = self.get_current_velocity(vessel);
@@ -1898,6 +1952,7 @@ impl MissionControl {
         let pos = *vessel.body.get_position();
         let vel = *vessel.body.get_velocity();
         let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
+        let moon_dist = (moon_pos - pos).length() - self.moon_radius;
 
         let mut conditions = Vec::new();
 
@@ -1913,6 +1968,8 @@ impl MissionControl {
                     ("vel", velocity, cond.value, false),
                 TriggerType::VelocityBelow =>
                     ("vel↓", velocity, cond.value, false),
+                TriggerType::DistanceToMoonBelow =>
+                    ("moon↓", moon_dist, cond.value, false),
                 TriggerType::VelocityRatioAbove => {
                     let cur = velocity / v_orbital;
                     ("v/v₀", cur, cond.value, false)
@@ -1956,55 +2013,58 @@ impl MissionControl {
 
             let target_safe = if target.abs() < 1e-12 { 1.0 } else { target };
 
+            // 进度归一化基准：仅当该 transition 的起点就是当前阶段时，
+            // phase_entry_* 才对应转换入口处的高度/速度，可作归一化分母；
+            // 对更下游（尚未进入）的阶段转换用“当前值/目标值”的简单比例，
+            // 否则 translunar 段速度远低于 TLI 入口速度，会提前显示
+            // reentry/success 的“幽灵进度”（例如 vel↓ 20 显示 90%）。
+            let use_entry = transition.from == self.phase_name;
+            let entry = match (use_entry, cond.trigger_type) {
+                (true, TriggerType::AltitudeAbove | TriggerType::AltitudeBelow) =>
+                    Some(self.phase_entry_altitude),
+                (true, TriggerType::VelocityAbove | TriggerType::VelocityBelow) =>
+                    Some(self.phase_entry_velocity),
+                (true, TriggerType::VelocityRatioAbove | TriggerType::VelocityRatioBelow) => {
+                    let v_orb_entry =
+                        (grav_const * earth_mass / (earth_radius + self.phase_entry_altitude)).sqrt();
+                    Some(if v_orb_entry > 0.0 { self.phase_entry_velocity / v_orb_entry } else { 0.0 })
+                }
+                _ => None,
+            };
+
             let progress = if is_boolean {
                 if current >= 0.5 { 1.0 } else { 0.0 }
+            } else if let Some(entry) = entry {
+                // 当前阶段 → 下一阶段：以本阶段入口状态为基准归一化
+                let above = matches!(cond.trigger_type,
+                    TriggerType::AltitudeAbove | TriggerType::VelocityAbove
+                    | TriggerType::VelocityRatioAbove);
+                if above {
+                    if current >= target_safe { 1.0 }
+                    else if current <= entry { 0.0 }
+                    else { ((current - entry) / (target_safe - entry)).min(1.0).max(0.0) }
+                } else if current <= target_safe { 1.0 }
+                else if current >= entry { 0.0 }
+                else { ((entry - current) / (entry - target_safe)).min(1.0).max(0.0) }
             } else {
-                match cond.trigger_type {
-                    TriggerType::AltitudeAbove => {
-                        let entry = self.phase_entry_altitude;
-                        if current >= target_safe { 1.0 }
-                        else if current <= entry { 0.0 }
-                        else { ((current - entry) / (target_safe - entry)).min(1.0).max(0.0) }
-                    }
-                    TriggerType::AltitudeBelow => {
-                        let entry = self.phase_entry_altitude;
-                        if current <= target_safe { 1.0 }
-                        else if current >= entry { 0.0 }
-                        else { ((entry - current) / (entry - target_safe)).min(1.0).max(0.0) }
-                    }
-                    TriggerType::VelocityAbove => {
-                        let entry = self.phase_entry_velocity;
-                        if current >= target_safe { 1.0 }
-                        else if current <= entry { 0.0 }
-                        else { ((current - entry) / (target_safe - entry)).min(1.0).max(0.0) }
-                    }
-                    TriggerType::VelocityBelow => {
-                        let entry = self.phase_entry_velocity;
-                        if current <= target_safe { 1.0 }
-                        else if current >= entry { 0.0 }
-                        else { ((entry - current) / (entry - target_safe)).min(1.0).max(0.0) }
-                    }
-                    TriggerType::VelocityRatioAbove => {
-                        let v_orb_entry = (grav_const * earth_mass / (earth_radius + self.phase_entry_altitude)).sqrt();
-                        let entry = if v_orb_entry > 0.0 { self.phase_entry_velocity / v_orb_entry } else { 0.0 };
-                        if current >= target_safe { 1.0 }
-                        else if current <= entry { 0.0 }
-                        else { ((current - entry) / (target_safe - entry)).min(1.0).max(0.0) }
-                    }
-                    TriggerType::VelocityRatioBelow => {
-                        let v_orb_entry = (grav_const * earth_mass / (earth_radius + self.phase_entry_altitude)).sqrt();
-                        let entry = if v_orb_entry > 0.0 { self.phase_entry_velocity / v_orb_entry } else { 0.0 };
-                        if current <= target_safe { 1.0 }
-                        else if current >= entry { 0.0 }
-                        else { ((entry - current) / (entry - target_safe)).min(1.0).max(0.0) }
-                    }
-                    _ => (current / target_safe).min(1.0).max(0.0),
+                // 下游未到达阶段：Above 用 current/target，Below 反向用 target/current，
+                // 未接近目标时进度≈0，不会提前“涨进度”
+                let below = matches!(cond.trigger_type,
+                    TriggerType::AltitudeBelow | TriggerType::VelocityBelow
+                    | TriggerType::VelocityRatioBelow | TriggerType::DistanceToMoonBelow);
+                if below {
+                    if current <= target_safe { 1.0 }
+                    else { (target_safe / current).min(1.0) }
+                } else {
+                    (current / target_safe).min(1.0).max(0.0)
                 }
             };
 
             let is_met = match cond.trigger_type {
                 TriggerType::AltitudeBelow | TriggerType::VelocityBelow
-                | TriggerType::VelocityRatioBelow => current <= target_safe,
+                | TriggerType::VelocityRatioBelow | TriggerType::DistanceToMoonBelow => {
+                    current <= target_safe
+                }
                 _ => current >= target_safe,
             };
 
@@ -2056,7 +2116,13 @@ impl MissionControl {
     }
 
     /// ICPS/TLI 等阶段行为（原硬编码逻辑，移出 update 保持干净）
-    fn handle_phase_behavior(&mut self, vessel: &mut Vessel, earth: &Planet) {
+    fn handle_phase_behavior(
+        &mut self,
+        vessel: &mut Vessel,
+        earth: &Planet,
+        moon_pos: Vec3,
+        moon_vel: Vec3,
+    ) {
         // ICPS 三阶段：滑行 → 远地点点火 → 圆化断油
         if !self.cutoff_fired
             && self.current_phase == MissionPhase::Orbit
@@ -2130,56 +2196,96 @@ impl MissionControl {
             }
         }
 
-        // TLI (Trans-Lunar Injection) — 等待近地点再点火
+        // TLI (Trans-Lunar Injection) — 拦截制导：驻留等待 Lambert 窗口
+        // 点火时机由"当前位置 → 月球到达位置"的拦截解决定（不写死时间）；
+        // 仅当长时间无可行解时才兜底为远地点抬升，保证任务继续。
         if self.cutoff_fired && !self.tli_complete && self.current_phase == MissionPhase::Tei {
             let pos = *vessel.body.get_position();
             let vel = *vessel.body.get_velocity();
 
             if !self.tli_started {
-                // 等待近地点：径向速度≈0 且高度≈近地点
-                let r_dot_v = pos.dot(&vel);
-                let altitude = pos.length() - earth.get_radius();
-                let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
-                let periapsis_alt =
-                    oe.semi_major_axis * (1.0 - oe.eccentricity) - earth.get_radius();
-                let time_since_cutoff = self.mission_time - self.cutoff_time;
-
-                let near_periapsis =
-                    r_dot_v.abs() < 100.0 && altitude < (periapsis_alt + 50_000.0);
-                let waited_too_long = time_since_cutoff > 7000.0;
-
-                if near_periapsis || waited_too_long {
+                if let Some((dir, target_speed, dv_req)) =
+                    self.find_tli_intercept(pos, vel, moon_pos, moon_vel, vessel, earth)
+                {
                     self.tli_started = true;
+                    self.tli_has_target = true;
+                    self.tli_target_dir = dir;
+                    self.tli_target_speed = target_speed;
                     self.tli_ignition_time = self.mission_time;
                     let active_stage = vessel.current_stage;
                     vessel.set_stage_throttle(active_stage, 1.0);
                     eprintln!(
-                        "  T+ {:7.1}s  TLI Ignition @ periapsis (alt={:.0}km, pe={:.0}km)",
+                        "  T+ {:7.1}s  TLI Ignition (intercept window, Δv={:.0}m/s) — dir=({:+.3},{:+.3},{:+.3}) target_v={:.0}m/s",
                         self.mission_time,
-                        altitude / 1000.0,
-                        periapsis_alt / 1000.0
+                        dv_req,
+                        dir.x,
+                        dir.y,
+                        dir.z,
+                        target_speed
                     );
+                } else {
+                    // 窗口搜索进度上报（每 10h 一条，避免刷屏）
+                    if self.mission_time - self.tli_last_search_report > 36_000.0 {
+                        self.tli_last_search_report = self.mission_time;
+                        eprintln!(
+                            "  T+ {:7.1}s  TLI window search: best Δv={:.0}m/s (budget {:.0}m/s) — coasting in parking orbit",
+                            self.mission_time,
+                            self.tli_best_dv,
+                            self.tli_dv_budget(vessel)
+                        );
+                    }
+                    // 兜底：长时间无拦截窗口 → 恢复远地点抬升（尽力而为）
+                    if self.mission_time - self.cutoff_time > 900_000.0 {
+                        self.tli_started = true;
+                        self.tli_has_target = false;
+                        self.tli_ignition_time = self.mission_time;
+                        let active_stage = vessel.current_stage;
+                        vessel.set_stage_throttle(active_stage, 1.0);
+                        eprintln!(
+                            "  T+ {:7.1}s  TLI Ignition (fallback: no intercept window in 900ks) — raising apoapsis",
+                            self.mission_time
+                        );
+                    }
                 }
             } else {
-                // TLI 燃烧中 — 检查完成条件
-                let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
-                let apoapsis_alt =
-                    oe.semi_major_axis * (1.0 + oe.eccentricity) - earth.get_radius();
+                // TLI 燃烧中 — 保持油门；朝向由 app 层按 tli_target_dir 覆盖
+                vessel.set_stage_throttle(vessel.current_stage, 1.0);
                 let burn_duration = self.mission_time - self.tli_ignition_time;
+                let mut done = false;
 
-                // 目标远地点：月球距离（~384,400 km），留余量
-                if apoapsis_alt > 400_000_000.0 || burn_duration > 2200.0 {
+                if self.tli_has_target {
+                    // 拦截解：沿目标方向速度达标即完成
+                    let v_along = vel.dot(&self.tli_target_dir);
+                    done = v_along >= self.tli_target_speed || burn_duration > 2500.0;
+                } else {
+                    // 兜底：远地点抬升至月球距离
+                    let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
+                    let apoapsis_alt =
+                        oe.semi_major_axis * (1.0 + oe.eccentricity) - earth.get_radius();
+                    done = apoapsis_alt > 400_000_000.0 || burn_duration > 2200.0;
+                }
+                // 推进剂耗尽（发动机自动熄火）也结束燃烧
+                if self.last_engine_status.total_thrust < 1.0 && burn_duration > 5.0 {
+                    done = true;
+                }
+
+                if done {
                     let stage = vessel.current_stage;
                     vessel.set_stage_throttle(stage, 0.0);
                     self.tli_complete = true;
                     self.flags.insert("tli_complete".into(), true);
                     self.translunar_start_time = self.mission_time;
-                    eprintln!(
-                        "  T+ {:7.1}s  TLI Complete (ap={:.0}km, dur={:.0}s)",
-                        self.mission_time,
-                        apoapsis_alt / 1000.0,
-                        burn_duration
-                    );
+                    if self.tli_has_target {
+                        eprintln!(
+                            "  T+ {:7.1}s  TLI Complete (intercept target v reached, dur={:.0}s)",
+                            self.mission_time, burn_duration
+                        );
+                    } else {
+                        eprintln!(
+                            "  T+ {:7.1}s  TLI Complete (fallback apoapsis raise, dur={:.0}s)",
+                            self.mission_time, burn_duration
+                        );
+                    }
                 }
             }
         }
@@ -2255,6 +2361,103 @@ impl MissionControl {
                 }
             }
         }
+    }
+
+    /// TLI 拦截窗口搜索：扫描转移时间，对每个候选到达点求 Lambert 解，
+    /// 返回 (燃烧方向, 目标速度, 所需Δv)。Δv 超出当前级预算则视为无解。
+    fn find_tli_intercept(
+        &mut self,
+        pos: Vec3,
+        vel: Vec3,
+        moon_pos: Vec3,
+        moon_vel: Vec3,
+        vessel: &Vessel,
+        earth: &Planet,
+    ) -> Option<(Vec3, f64, f64)> {
+        let mu = crate::G * earth.get_mass();
+        let dv_max = self.tli_dv_budget(vessel);
+        let mut best: Option<(f64, Vec3, f64)> = None;
+
+        let r1m = pos.length();
+        let mut t_arr = 150_000.0;
+        while t_arr <= 700_000.0 {
+            let r2 = Self::propagate_moon_circular(moon_pos, moon_vel, t_arr);
+            let r2m = r2.length();
+            if r2m < 1.0 {
+                t_arr += 5_000.0;
+                continue;
+            }
+            let cos_dnu = (pos.dot(&r2) / (r1m * r2m)).clamp(-1.0, 1.0);
+            let v1 = if (cos_dnu + 1.0).abs() < 1e-3 {
+                // 近 180°（霍曼几何）：lambert 退化，用切向霍曼近似
+                let v_hoh = (mu * (2.0 / r1m - 2.0 / (r1m + r2m))).sqrt();
+                let v_dir = vel - pos.normalized() * vel.dot(&pos.normalized());
+                if v_dir.length() > 1e-6 {
+                    v_dir.normalized() * v_hoh
+                } else {
+                    vel.normalized() * v_hoh
+                }
+            } else {
+                match OrbitalMechanics::lambert_velocity(pos, r2, t_arr, mu) {
+                    Some(v) => v,
+                    None => {
+                        t_arr += 5_000.0;
+                        continue;
+                    }
+                }
+            };
+
+            let dv = (v1 - vel).length();
+            // 顺行拦截（点积为正）且 Δv 在预算内
+            if dv > 50.0 && dv < dv_max && v1.dot(&vel) > 100.0 {
+                if dv < self.tli_best_dv {
+                    self.tli_best_dv = dv;
+                }
+                let better = match &best {
+                    Some((best_dv, _, _)) => dv < *best_dv,
+                    None => true,
+                };
+                if better {
+                    best = Some((dv, (v1 - vel).normalized(), v1.length()));
+                }
+            }
+            t_arr += 5_000.0;
+        }
+
+        best.map(|(dv, dir, vt)| (dir, vt, dv))
+    }
+
+    /// TLI 可用 Δv 预算：当前级剩余推进剂（火箭方程，真空比冲）
+    fn tli_dv_budget(&self, vessel: &Vessel) -> f64 {
+        let stage = vessel.current_stage;
+        let mut prop = 0.0;
+        let mut isp_vac = 450.0;
+        for p in &vessel.parts {
+            if p.stage != stage || p.decoupled {
+                continue;
+            }
+            match &p.kind {
+                PartKind::FuelTank(t) => prop += t.current_fuel,
+                PartKind::Engine(e) => isp_vac = e.isp_vac.max(isp_vac),
+                _ => {}
+            }
+        }
+        let m0 = vessel.body.get_mass();
+        let mf = (m0 - prop).max(1.0);
+        isp_vac * crate::G0 * (m0 / mf).ln()
+    }
+
+    /// 按圆周轨道传播月球位置（与 app 层天体动画一致：Rodrigues 旋转）
+    fn propagate_moon_circular(pos: Vec3, vel: Vec3, dt: f64) -> Vec3 {
+        let r = pos.length();
+        let v = vel.length();
+        if r < 1.0 || v < 1e-9 {
+            return pos;
+        }
+        let omega = v / r;
+        let n = pos.cross(&vel).normalized();
+        let th = omega * dt;
+        pos * th.cos() + n.cross(&pos) * th.sin()
     }
 
     fn update_telemetry(&mut self, vessel: &Vessel, earth: &Planet) {

@@ -495,6 +495,141 @@ impl OrbitalMechanics {
             (2.0 * G * planet.get_mass() / r).sqrt()
         }
     }
+
+    /// Lambert 问题（universal variables，Curtis Algorithm 5.2 风格）：
+    /// 给定起点 r1、终点 r2 与飞行时间 tof，返回在 r1 处所需的转移速度。
+    /// 仅处理短程（Δν ≤ π）转移；几何退化或无解时返回 None。
+    pub fn lambert_velocity(r1: Vec3, r2: Vec3, tof: f64, mu: f64) -> Option<Vec3> {
+        if tof <= 0.0 || mu <= 0.0 {
+            return None;
+        }
+        let r1m = r1.length();
+        let r2m = r2.length();
+        if r1m < 1e-6 || r2m < 1e-6 {
+            return None;
+        }
+        let cos_dnu = (r1.dot(&r2) / (r1m * r2m)).clamp(-1.0, 1.0);
+        let sin_dnu = (1.0 - cos_dnu * cos_dnu).sqrt();
+        if sin_dnu < 1e-6 {
+            // 共线（Δν ≈ 0 或 π）：转移几何退化
+            return None;
+        }
+        let a_const = sin_dnu * (r1m * r2m / (1.0 - cos_dnu)).sqrt();
+        let sqrt_mu = mu.sqrt();
+
+        // 带数值导数的安全 Newton 迭代 z（F(z) = χ³S + A√y − √μ·tof）
+        let fz = |z: f64| -> Option<f64> {
+            let (c2, c3) = Self::stumpff(z);
+            if c2 <= 0.0 {
+                return None;
+            }
+            let y = r1m + r2m + a_const * (z * c3 - 1.0) / c2.sqrt();
+            if !(y > 0.0) {
+                return None;
+            }
+            let chi = (y / c2).sqrt();
+            Some(chi * chi * chi * c3 + a_const * y.sqrt() - sqrt_mu * tof)
+        };
+
+        let mut z: f64 = 0.0;
+        let mut converged = false;
+        let mut f_cur = match fz(0.0) {
+            Some(f) => f,
+            None => return None,
+        };
+        // F 的量级 ≈ √μ·tof，容差必须相对化（f64 无法达到绝对 1e-8）
+        let f_tol = 1e-10 * (1.0 + sqrt_mu * tof);
+        for _ in 0..80 {
+            if f_cur.abs() < f_tol {
+                converged = true;
+                break;
+            }
+            // 数值导数（对 z 缩放，避免大步长溢出）
+            let eps = 1e-7 * (1.0 + z.abs());
+            let f_eps = fz(z + eps).unwrap_or(f_cur);
+            let dfdz = (f_eps - f_cur) / eps;
+            let mut step = if dfdz.abs() > 1e-12 {
+                f_cur / dfdz
+            } else {
+                0.5 * z.max(1.0)
+            };
+            // 步长足够小 = 已收敛（比 F 判据更稳健）
+            if step.abs() < 1e-11 * (1.0 + z.abs()) {
+                converged = true;
+                break;
+            }
+            // 带线性搜索的折半：保证 |F| 单调下降
+            let mut z_new = z - step;
+            let mut accepted = false;
+            for _ in 0..16 {
+                if let Some(fn_) = fz(z_new) {
+                    if fn_.abs() < f_cur.abs() {
+                        f_cur = fn_;
+                        accepted = true;
+                        break;
+                    }
+                }
+                z_new = z - step * 0.5;
+                step *= 0.5;
+                if step.abs() < 1e-10 {
+                    break;
+                }
+            }
+            if !accepted {
+                // 卡住：向 0 收缩后重试
+                z *= 0.5;
+                match fz(z) {
+                    Some(f) => f_cur = f,
+                    None => return None,
+                }
+            } else {
+                z = z_new;
+            }
+        }
+        if !converged {
+            return None;
+        }
+
+        let (c2, c3) = Self::stumpff(z);
+        if c2 <= 0.0 {
+            return None;
+        }
+        let y = r1m + r2m + a_const * (z * c3 - 1.0) / c2.sqrt();
+        if !(y > 0.0) {
+            return None;
+        }
+        let chi = (y / c2).sqrt();
+        let f_univ = 1.0 - chi * chi * c2 / r1m;
+        let g_univ = tof - chi * chi * chi * c3 / sqrt_mu;
+        if g_univ.abs() < 1e-9 {
+            return None;
+        }
+        let v1 = (r2 - r1 * f_univ) / g_univ;
+        if v1.x.is_finite() && v1.y.is_finite() && v1.z.is_finite() {
+            Some(v1)
+        } else {
+            None
+        }
+    }
+
+    /// Stumpff 函数 C(z)、S(z)（以 −z 为幂的级数，正负 z 均收敛）
+    fn stumpff(z: f64) -> (f64, f64) {
+        let mut c2 = 1.0 / 2.0;
+        let mut s2 = 1.0 / 6.0;
+        let mut tc = 1.0 / 2.0;
+        let mut ts = 1.0 / 6.0;
+        let mz = -z;
+        for k in 1..64 {
+            tc *= mz / ((2 * k + 1) as f64 * (2 * k + 2) as f64);
+            ts *= mz / ((2 * k + 2) as f64 * (2 * k + 3) as f64);
+            c2 += tc;
+            s2 += ts;
+            if tc.abs() < 1e-18 && ts.abs() < 1e-18 {
+                break;
+            }
+        }
+        (c2, s2)
+    }
 }
 
 // =====================================================================
@@ -1432,5 +1567,69 @@ mod tests {
         let rel_error = (e1 - e0).abs() / e0.abs().max(1.0);
         assert!(rel_error < 1e-8, "Long-term energy drift: {}", rel_error);
         assert!(!sys.has_collision());
+    }
+
+    #[test]
+    fn test_lambert_hohmann_near_180() {
+        // 近 180° 转移应逼近霍曼转移速度 v_hoh = sqrt(μ(2/r1 − 2/(r1+r2)))
+        let mu: f64 = 3.986_004_418e14;
+        let r1 = Vec3::new(6_676_000.0, 0.0, 0.0);
+        let theta = std::f64::consts::PI * 179.0 / 180.0;
+        let r2 = Vec3::new(384_400_000.0 * theta.cos(), 384_400_000.0 * theta.sin(), 0.0);
+        let a: f64 = (6_676_000.0 + 384_400_000.0) / 2.0;
+        let tof = std::f64::consts::PI * (a * a * a / mu).sqrt();
+        let v_hoh = (mu * (2.0 / 6_676_000.0 - 2.0 / (6_676_000.0 + 384_400_000.0))).sqrt();
+
+        let v1 = OrbitalMechanics::lambert_velocity(r1, r2, tof, mu).expect("near-Hohmann solves");
+        let rel = (v1.length() - v_hoh).abs() / v_hoh;
+        assert!(rel < 0.02, "|v1|={:.1} vs Hohmann {:.1} (rel {})", v1.length(), v_hoh, rel);
+        // 近圆周起点的转移速度应近似切向
+        let tangency = v1.dot(&r1.normalized()).abs() / v1.length();
+        assert!(tangency < 0.05, "v1 not tangential: {}", tangency);
+    }
+
+    #[test]
+    fn test_lambert_returns_transfer_orbit() {
+        // 端到端：返回的 v1 在 tof 后应到达 r2（RK4 正向传播验证）
+        let mu = 3.986_004_418e14;
+        let r1 = Vec3::new(6_676_000.0, 0.0, 0.0);
+        let r2 = Vec3::new(0.0, 384_400_000.0, 0.0); // 90° 转移
+        let tof = 500_000.0;
+
+        let v1 = OrbitalMechanics::lambert_velocity(r1, r2, tof, mu).expect("90deg solves");
+        let mut pos = r1;
+        let mut vel = v1;
+        let dt = 50.0;
+        let steps = (tof / dt) as usize;
+        for _ in 0..steps {
+            let a = -mu * pos.normalized() / pos.length_squared();
+            let k1v = a;
+            let k1p = vel;
+            let a2 = -mu * (pos + k1p * dt * 0.5).normalized() / (pos + k1p * dt * 0.5).length_squared();
+            let k2v = a2;
+            let k2p = vel + k1v * dt * 0.5;
+            let a3 = -mu * (pos + k2p * dt * 0.5).normalized() / (pos + k2p * dt * 0.5).length_squared();
+            let k3v = a3;
+            let k3p = vel + k2v * dt * 0.5;
+            let a4 = -mu * (pos + k3p * dt).normalized() / (pos + k3p * dt).length_squared();
+            let k4v = a4;
+            let k4p = vel + k3v * dt;
+            vel = vel + (k1v + k2v * 2.0 + k3v * 2.0 + k4v) * (dt / 6.0);
+            pos = pos + (k1p + k2p * 2.0 + k3p * 2.0 + k4p) * (dt / 6.0);
+        }
+        let err = (pos - r2).length() / 384_400_000.0;
+        assert!(err < 0.01, "endpoint error {}%", err * 100.0);
+    }
+
+    #[test]
+    fn test_lambert_degenerate_and_invalid() {
+        let mu = 3.986_004_418e14;
+        // 共线（Δν=π）退化
+        let r1 = Vec3::new(6_676_000.0, 0.0, 0.0);
+        let r2 = Vec3::new(-384_400_000.0, 0.0, 0.0);
+        assert!(OrbitalMechanics::lambert_velocity(r1, r2, 400_000.0, mu).is_none());
+        // 无效输入
+        assert!(OrbitalMechanics::lambert_velocity(r1, r2, -1.0, mu).is_none());
+        assert!(OrbitalMechanics::lambert_velocity(r1, Vec3::zero(), 400_000.0, mu).is_none());
     }
 }
