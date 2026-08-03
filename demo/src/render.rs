@@ -1145,3 +1145,110 @@ pub fn to_mvec3(v: deepspace::Vec3) -> Vec3 {
 pub fn from_mvec3(v: Vec3) -> deepspace::Vec3 {
     deepspace::Vec3::new(v.x as f64, v.y as f64, v.z as f64)
 }
+
+// =====================================================================
+// 统一 HUD — 多类型物理模拟互通显示层
+// =====================================================================
+
+/// 实体类型对应的 HUD 颜色
+pub fn entity_kind_color(kind: deepspace::entity::EntityKind) -> Color {
+    use deepspace::entity::EntityKind::*;
+    match kind {
+        Rocket => Color::new(0.4, 0.9, 1.0, 1.0),   // 青 — 火箭
+        Spacecraft => Color::new(0.6, 0.8, 1.0, 1.0), // 亮蓝 — 航天器
+        Missile => Color::new(1.0, 0.4, 0.3, 1.0),  // 红 — 拦截导弹
+        Icbm => Color::new(1.0, 0.7, 0.2, 1.0),     // 橙 — 弹道目标
+        Aircraft => Color::new(0.4, 1.0, 0.5, 1.0), // 绿 — 飞机
+        Body => Color::new(0.8, 0.8, 0.8, 1.0),     // 灰 — 天体
+    }
+}
+
+/// 单行实体遥测（统一视图，任何类型都可显示）
+pub struct EntityHudRow {
+    pub kind: deepspace::entity::EntityKind,
+    pub name: String,
+    pub altitude_km: f64,
+    pub speed_mps: f64,
+    pub status: String,
+    pub alive: bool,
+}
+
+impl EntityHudRow {
+    pub fn from_entity(e: &deepspace::entity::Entity) -> Self {
+        Self {
+            kind: e.kind,
+            name: e.name.clone(),
+            altitude_km: e.altitude_m / 1000.0,
+            speed_mps: e.speed_mps,
+            status: e.status.clone(),
+            alive: e.alive,
+        }
+    }
+}
+
+/// 绘制统一实体遥测面板（左上）— 所有类型共享一个表格
+pub fn draw_entity_hud_panel(rows: &[EntityHudRow], x: f32, y: f32) {
+    let s = ui_scale();
+    let row_h = 26.0 * s;
+    let col_x = [
+        x + 12.0 * s,   // 类型色块 + 名称
+        x + 170.0 * s,  // 高度
+        x + 260.0 * s,  // 速度
+        x + 350.0 * s,  // 状态
+    ];
+    let panel_w = 520.0 * s;
+    let content_h = row_h * rows.len() as f32 + 34.0 * s;
+
+    draw_rectangle(x - 8.0 * s, y - 28.0 * s, panel_w + 16.0 * s, content_h + 8.0 * s,
+        Color::new(0.05, 0.06, 0.09, 0.85));
+    text("实体遥测 (UNIFIED)", x, y - 8.0 * s, 15.0 * s, Color::new(0.7, 0.8, 1.0, 1.0));
+
+    let mut cy = y + 12.0 * s;
+    for row in rows {
+        let c = entity_kind_color(row.kind);
+        let alive_c = if row.alive { c } else { Color::new(0.4, 0.4, 0.4, 1.0) };
+        // 类型色块
+        draw_rectangle(x, cy - 14.0 * s, 10.0 * s, 10.0 * s, alive_c);
+        // 名称
+        text(&row.name, col_x[0] + 16.0 * s, cy, 14.0 * s, alive_c);
+        // 高度
+        text(&format!("{:>7.1} km", row.altitude_km), col_x[1], cy, 14.0 * s, Color::new(0.9, 0.9, 0.9, 1.0));
+        // 速度
+        text(&format!("{:>6.0} m/s", row.speed_mps), col_x[2], cy, 14.0 * s, Color::new(0.9, 0.9, 0.9, 1.0));
+        // 状态
+        text(&row.status, col_x[3], cy, 13.0 * s, Color::new(0.65, 0.75, 0.85, 1.0));
+        cy += row_h;
+    }
+}
+
+/// 绘制世界事件日志面板（左下）— 闭环反馈流
+pub fn draw_event_log_panel(events: &[String], x: f32, y: f32) {
+    let s = ui_scale();
+    let row_h = 20.0 * s;
+    let max_rows = 8;
+    let show = events.iter().rev().take(max_rows);
+    let content_h = row_h * (show.clone().count() as f32) + 30.0 * s;
+    let panel_w = 460.0 * s;
+
+    draw_rectangle(x - 8.0 * s, y - 26.0 * s, panel_w + 16.0 * s, content_h + 8.0 * s,
+        Color::new(0.05, 0.06, 0.09, 0.85));
+    text("事件日志 (EVENTS)", x, y - 6.0 * s, 15.0 * s, Color::new(1.0, 0.85, 0.5, 1.0));
+
+    let mut cy = y + 10.0 * s;
+    for ev in show {
+        text(ev, x + 4.0 * s, cy, 13.0 * s, Color::new(0.8, 0.85, 0.9, 1.0));
+        cy += row_h;
+    }
+}
+
+/// 绘制世界状态条（顶部）— 时间 / 实体数 / 事件数
+pub fn draw_world_status_bar(time_s: f64, entity_count: usize, event_count: usize) {
+    let s = ui_scale();
+    let label = format!(
+        "T+{:>7.1}s   实体 {:>2}   事件 {:>3}",
+        time_s, entity_count, event_count
+    );
+    draw_rectangle(0.0, 0.0, screen_width(), 30.0 * s,
+        Color::new(0.05, 0.06, 0.09, 0.9));
+    text(&label, 12.0 * s, 20.0 * s, 16.0 * s, Color::new(0.75, 0.9, 1.0, 1.0));
+}

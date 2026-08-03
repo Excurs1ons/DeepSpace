@@ -115,6 +115,33 @@ impl Quaternion {
         Vec3::new(pitch, yaw, roll)
     }
 
+    /// 获取偏航角（度），范围 [-180, 180]
+    pub fn yaw_deg(&self) -> f64 {
+        let euler = self.to_euler();
+        euler.y.to_degrees()
+    }
+
+    /// 获取俯仰角（度）
+    pub fn pitch_deg(&self) -> f64 {
+        let euler = self.to_euler();
+        euler.x.to_degrees()
+    }
+
+    /// 获取滚转角（度）
+    pub fn roll_deg(&self) -> f64 {
+        let euler = self.to_euler();
+        euler.z.to_degrees()
+    }
+
+    /// 从 Yaw-Pitch-Roll 创建（度）
+    pub fn from_ypr_deg(yaw: f64, pitch: f64, roll: f64) -> Self {
+        Self::from_euler(
+            pitch.to_radians(),
+            yaw.to_radians(),
+            roll.to_radians(),
+        )
+    }
+
     /// 创建将 `from` 旋转到 `to` 的最短弧四元数
     ///
     /// 两个向量都自动归一化。处理 0°（恒等）和 180°（绕任意垂直轴）边界。
