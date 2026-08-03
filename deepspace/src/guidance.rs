@@ -188,8 +188,8 @@ impl FlightComputer {
 /// 从 `pitch_start_alt_m` 到 `pitch_end_alt_m` 按余弦曲线从垂直转向水平。
 /// 起点导数为零，平滑过渡。终点接近水平。
 ///
-/// ```
-/// pitch(°) = 90 × (1 - cos(progress × π/2))
+/// ```text
+/// pitch_deg = 90.0 * (1.0 - cos(progress * PI / 2.0))
 /// ```
 ///
 /// 这是从 app.rs 硬编码逻辑提取的独立实现，保持完全相同的行为。

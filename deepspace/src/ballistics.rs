@@ -38,7 +38,7 @@ pub struct StageConfig {
     pub structural_mass_kg: f64,
     pub thrust_vac_n: f64,
     pub thrust_sl_n: f64,
-    pub isp_sl_s: f64, // 海平面比冲 (s)
+    pub isp_sl_s: f64,  // 海平面比冲 (s)
     pub isp_vac_s: f64, // 真空比冲 (s)
     pub burn_duration_s: f64,
     pub exit_area_m2: f64, // 喷管出口面积
@@ -326,14 +326,68 @@ impl IcbmState {
         );
     }
 
-    /// 将 ECEF 坐标转为地理坐标（球面近似）
+    /// 将 ECEF 坐标转地理坐标（椭球反算，Bowring 迭代法）
+    ///
+    /// 与 `EarthModel::radius_at_latitude` 使用的椭球模型严格互逆，
+    /// 返回大地纬度、经度、椭球高度（真实海拔，非球面近似）。
     pub fn ecef_to_geo(pos: Vec3) -> (f64, f64, f64) {
-        let r = pos.length();
-        let lat = (pos.z / r).asin().to_degrees();
-        let lon = pos.y.atan2(pos.x).to_degrees();
-        let alt = r - EARTH_EQUATORIAL_RADIUS;
-        (lat, lon, alt)
+        let a = EARTH_EQUATORIAL_RADIUS;
+        let b = EARTH_POLAR_RADIUS;
+        let e2 = 1.0 - (b * b) / (a * a); // 第一偏心率平方
+
+        let lon = pos.y.atan2(pos.x);
+
+        let p = (pos.x * pos.x + pos.y * pos.y).sqrt(); // 到极轴距离
+        if p < 1e-7 {
+            // 极点：lat = ±90°
+            let lat = if pos.z >= 0.0 {
+                std::f64::consts::FRAC_PI_2
+            } else {
+                -std::f64::consts::FRAC_PI_2
+            };
+            let alt = pos.z.abs() - b;
+            return (lat.to_degrees(), lon.to_degrees(), alt);
+        }
+
+        // Bowring 迭代求大地纬度
+        let mut lat = (pos.z / p).atan(); // 初始：球心纬度
+        for _ in 0..6 {
+            let sin_lat = lat.sin();
+            let n = a / (1.0 - e2 * sin_lat * sin_lat).sqrt(); // 卯酉圈曲率半径
+            let alt = p / lat.cos() - n; // h 通过当前 lat 求
+            lat = (pos.z / p * (1.0 - e2 * n / (n + alt)).recip()).atan();
+        }
+        // 由最终 lat 精确反算高度
+        let sin_lat = lat.sin();
+        let cos_lat = lat.cos();
+        let n = a / (1.0 - e2 * sin_lat * sin_lat).sqrt();
+        let alt = if cos_lat > 1e-9 {
+            p / cos_lat - n
+        } else {
+            pos.z.abs() - b
+        };
+        (lat.to_degrees(), lon.to_degrees(), alt)
     }
+
+    /// 将地理坐标（大地纬度、经度、椭球高度）转为 ECEF（椭球正算）
+    ///
+    /// 与 `ecef_to_geo` 严格互逆（同一 WGS-84 椭球参数）。
+    pub fn geo_to_ecef(lat_deg: f64, lon_deg: f64, alt: f64) -> Vec3 {
+        let a = EARTH_EQUATORIAL_RADIUS;
+        let b = EARTH_POLAR_RADIUS;
+        let e2 = 1.0 - (b * b) / (a * a);
+        let lat = lat_deg.to_radians();
+        let lon = lon_deg.to_radians();
+        let sin_lat = lat.sin();
+        let cos_lat = lat.cos();
+        let n = a / (1.0 - e2 * sin_lat * sin_lat).sqrt(); // 卯酉圈曲率半径
+        Vec3::new(
+            (n + alt) * cos_lat * lon.cos(),
+            (n + alt) * cos_lat * lon.sin(),
+            (n * (1.0 - e2) + alt) * sin_lat,
+        )
+    }
+
     pub fn great_circle_distance(
         lat1_deg: f64,
         lon1_deg: f64,
@@ -435,8 +489,18 @@ impl IcbmState {
             .sum();
 
         // 简化：所有级结构质量保留
-        let stage_structure: f64 = self.config.stages.iter().map(|s| s.structural_mass_kg).sum();
-        let rv_mass: f64 = self.config.reentry_vehicles.iter().map(|rv| rv.mass_kg).sum();
+        let stage_structure: f64 = self
+            .config
+            .stages
+            .iter()
+            .map(|s| s.structural_mass_kg)
+            .sum();
+        let rv_mass: f64 = self
+            .config
+            .reentry_vehicles
+            .iter()
+            .map(|rv| rv.mass_kg)
+            .sum();
         remaining + stage_structure + rv_mass + self.config.bus_mass_kg
     }
 
@@ -688,17 +752,21 @@ mod tests {
 
     #[test]
     fn ecef_geo_roundtrip() {
+        // 给定大地坐标（纬度/经度/椭球高度），经 geo_to_ecef → ecef_to_geo 应恒等
         let (lat, lon, alt): (f64, f64, f64) = (40.0, 116.0, 500.0);
-        let r = EarthModel::radius_at_latitude(lat) + alt;
-        let pos = Vec3::new(
-            r * lat.to_radians().cos() * lon.to_radians().cos(),
-            r * lat.to_radians().cos() * lon.to_radians().sin(),
-            r * lat.to_radians().sin(),
-        );
+        let pos = IcbmState::geo_to_ecef(lat, lon, alt);
         let (lat2, lon2, alt2) = IcbmState::ecef_to_geo(pos);
-        assert!((lat - lat2).abs() < 0.1);
-        assert!((lon - lon2).abs() < 0.1);
-        assert!((alt - alt2).abs() < 100.0);
+        assert!((lat - lat2).abs() < 0.001, "lat: {} vs {}", lat, lat2);
+        assert!((lon - lon2).abs() < 0.001, "lon: {} vs {}", lon, lon2);
+        assert!((alt - alt2).abs() < 1.0, "alt: {} vs {}", alt, alt2);
+
+        // 再验证一个南半球点
+        let (lat3, lon3, alt3) = (-35.0, -70.0, 10_000.0);
+        let pos3 = IcbmState::geo_to_ecef(lat3, lon3, alt3);
+        let (lat4, lon4, alt4) = IcbmState::ecef_to_geo(pos3);
+        assert!((lat3 - lat4).abs() < 0.001);
+        assert!((lon3 - lon4).abs() < 0.001);
+        assert!((alt3 - alt4).abs() < 1.0);
     }
 
     #[test]
