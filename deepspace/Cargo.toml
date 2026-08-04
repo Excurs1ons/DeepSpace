@@ -5,6 +5,10 @@ edition = "2021"
 description = "DeepSpace — 太空物理引擎"
 license = "MIT"
 
+# lib: Rust crate 使用；cdylib: 导出 C ABI（ffi.rs）供外部引擎（UE/Unity）链接
+[lib]
+crate-type = ["lib", "cdylib"]
+
 [features]
 serde = ["dep:serde"]
 

@@ -4,6 +4,7 @@ pub mod ballistics;
 pub mod core;
 pub mod entity;
 pub mod environment;
+pub mod ffi;
 pub mod frame_graph;
 pub mod guidance;
 pub mod missile;

@@ -134,7 +134,7 @@ impl World {
     /// 添加弹道目标（ICBM）
     pub fn add_ballistic(&mut self, cfg: BallisticConfig) -> u64 {
         let id = self.alloc_id();
-        let ent = Entity::new(
+        let mut ent = Entity::new(
             id,
             EntityKind::Icbm,
             &cfg.name,
@@ -143,12 +143,15 @@ impl World {
             cfg.mass,
             self.earth_radius,
         );
+        ent.status = "FLYING".to_string();
         self.events.push(WorldEvent::new(
             self.time(),
             EventKind::Launch,
             format!("{} 发射", cfg.name),
         ));
-        self.ballistic.push((ent, cfg));
+        self.ballistic.push((ent.clone(), cfg));
+        // 统一实体视图：弹道目标与飞船/拦截弹同表，外部 HUD / FFI 可遍历
+        self.entities.push(ent);
         id
     }
 
@@ -279,6 +282,23 @@ impl World {
         for (ent, _) in self.ballistic.iter_mut() {
             ent.sync(ent.position, ent.velocity, self.earth_radius);
             ent.status = if ent.alive { "FLYING" } else { "DESTROYED" }.to_string();
+        }
+        // 统一实体视图同步：entities 表中所有 Icbm 按注册顺序对应 ballistic
+        {
+            let mut b_idx = 0usize;
+            for ent in self.entities.iter_mut() {
+                if ent.kind == EntityKind::Icbm {
+                    if let Some((b, _)) = self.ballistic.get(b_idx) {
+                        ent.position = b.position;
+                        ent.velocity = b.velocity;
+                        ent.acceleration = b.acceleration;
+                        ent.altitude_m = b.altitude_m;
+                        ent.alive = b.alive;
+                        ent.status = b.status.clone();
+                    }
+                    b_idx += 1;
+                }
+            }
         }
 
         // 4.5 回填航天器实体视图（与 space.spacecraft 平行——按实体注册顺序匹配）
@@ -471,7 +491,8 @@ mod tests {
                 .iter()
                 .filter(|e| e.kind == EntityKind::Icbm)
                 .count(),
-            0
+            1,
+            "弹道目标应进入统一实体视图"
         );
         assert_eq!(w.ballistic.len(), 1);
         assert_eq!(w.ballistic[0].0.id, id);

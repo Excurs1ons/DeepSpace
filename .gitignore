@@ -13,3 +13,6 @@ Thumbs.db
 # Editor swap files
 *.swp
 *.swo
+
+# C ABI smoke test 编译产物
+demo/ffi/smoke_ffi
