@@ -179,8 +179,8 @@ async fn run_3d() {
     let mut trails: Vec<Trail> = Vec::new();
     let mut trail_ids: Vec<u64> = Vec::new();
 
-    // 加载字体
-    load_custom_font("assets/fonts/JetBrainsMono-Regular.ttf").await;
+    // 加载字体（NASA Eyes 风格：Metropolis）
+    load_custom_font(FONT_PATH).await;
 
     let mut cam = OrbitalCamera::new(Vec3::new(0.0, 6_500_000.0, 0.0), 200_000.0);
 

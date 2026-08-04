@@ -21,6 +21,9 @@ use std::sync::OnceLock;
 
 static CUSTOM_FONT: OnceLock<Font> = OnceLock::new();
 
+/// NASA Eyes 字体：Metropolis（抓取自 eyes.nasa.gov 公开 CDN，woff→ttf 转换）
+pub const FONT_PATH: &str = "assets/fonts/Metropolis-Light.ttf";
+
 /// 加载自定义 TTF 字体（在 async main 中调用一次）
 pub async fn load_custom_font(path: &str) {
     match load_ttf_font(path).await {
@@ -265,14 +268,21 @@ impl OrbitalCamera {
 // 颜色调色板
 // =====================================================================
 
-pub const COLOR_SUN: Color = Color::new(1.0, 0.8, 0.0, 1.0);
-pub const COLOR_MERCURY: Color = Color::new(0.7, 0.7, 0.7, 1.0);
-pub const COLOR_VENUS: Color = Color::new(0.9, 0.7, 0.3, 1.0);
-pub const COLOR_EARTH: Color = Color::new(0.2, 0.4, 0.8, 1.0);
-pub const COLOR_MARS: Color = Color::new(0.8, 0.3, 0.2, 1.0);
-pub const COLOR_JUPITER: Color = Color::new(0.8, 0.6, 0.4, 1.0);
-pub const COLOR_MOON: Color = Color::new(0.6, 0.6, 0.6, 1.0);
-pub const COLOR_SHIP: Color = Color::new(0.9, 0.9, 0.9, 1.0);
+// NASA Eyes 设计令牌（抓取 app.css 的 CSS 变量，2026-08）
+// 天体色：--mercury:#9768ac --venus:#b07919 --earth:#09c --mars:#9a4e19
+//         --saturn:#d5c187 --uranus:#68ccda --neptune:#708ce3 --moon:#b6acac
+//         --sun:#f7f4df --spacecraft:#cd9745 --asteroid:#806262
+pub const COLOR_SUN: Color = Color::new(0.97, 0.96, 0.87, 1.0); // #f7f4df 暖白
+pub const COLOR_MERCURY: Color = Color::new(0.59, 0.41, 0.67, 1.0); // #9768ac
+pub const COLOR_VENUS: Color = Color::new(0.69, 0.47, 0.10, 1.0); // #b07919
+pub const COLOR_EARTH: Color = Color::new(0.0, 0.6, 0.8, 1.0); // #09c 天蓝
+pub const COLOR_MARS: Color = Color::new(0.60, 0.31, 0.10, 1.0); // #9a4e19
+pub const COLOR_JUPITER: Color = Color::new(0.80, 0.70, 0.53, 1.0); // 介于 sandMed
+pub const COLOR_SATURN: Color = Color::new(0.84, 0.76, 0.53, 1.0); // #d5c187
+pub const COLOR_URANUS: Color = Color::new(0.41, 0.80, 0.85, 1.0); // #68ccda
+pub const COLOR_NEPTUNE: Color = Color::new(0.44, 0.55, 0.89, 1.0); // #708ce3
+pub const COLOR_MOON: Color = Color::new(0.71, 0.67, 0.67, 1.0); // #b6acac
+pub const COLOR_SHIP: Color = Color::new(0.80, 0.59, 0.27, 1.0); // #cd9745 航天器金
 pub const COLOR_PATH: Color = Color::new(0.3, 0.8, 1.0, 0.6);
 pub const COLOR_GIZMO_X: Color = Color::new(1.0, 0.2, 0.2, 1.0);
 pub const COLOR_GIZMO_Y: Color = Color::new(0.2, 1.0, 0.2, 1.0);
@@ -1391,8 +1401,8 @@ impl Xorshift {
     }
 }
 
-/// NASA Eyes 深空背景色
-pub const COLOR_SPACE_BG: Color = Color::new(0.008, 0.01, 0.02, 1.0);
+/// NASA Eyes 深空背景色（--bgGradient 底部 #070709 近纯黑暖调）
+pub const COLOR_SPACE_BG: Color = Color::new(0.027, 0.027, 0.035, 1.0);
 
 /// 静态星空 — 单位球面上的固定星点，随相机旋转产生视差
 pub struct StarField {
@@ -1627,9 +1637,9 @@ impl TimeControlBar {
         let h = 34.0 * s;
         let y = screen_height() - h;
 
-        // 半透明深色底 + 顶边高光细线
-        draw_rectangle(0.0, y, w, h, Color::new(0.01, 0.02, 0.04, 0.82));
-        draw_line(0.0, y, w, y, 1.0, Color::new(0.3, 0.45, 0.65, 0.35));
+        // 半透明深色底 + 顶边高光细线（NASA Eyes --grayDark + divider）
+        draw_rectangle(0.0, y, w, h, COLOR_PANEL_BG);
+        draw_line(0.0, y, w, y, 1.0, Color::new(0.216, 0.216, 0.227, 0.7));
 
         // 播放/暂停图标
         let ic = Color::new(0.75, 0.9, 1.0, 0.95);
@@ -1714,14 +1724,14 @@ impl ClickDetector {
     }
 }
 
-/// 深色半透明面板底色（NASA Eyes HUD）
-pub const COLOR_PANEL_BG: Color = Color::new(0.02, 0.03, 0.05, 0.82);
+/// 深色半透明面板底色（NASA Eyes HUD --grayDark:#252527 暖深灰）
+pub const COLOR_PANEL_BG: Color = Color::new(0.145, 0.145, 0.153, 0.92);
 
-/// 绘制面板背景 + 细边框（NASA Eyes HUD 风格）
+/// 绘制面板背景 + 细边框（NASA Eyes HUD 风格，--grayDivider:#37373a）
 pub fn draw_panel(x: f32, y: f32, w: f32, h: f32) {
     draw_rectangle(x, y, w, h, COLOR_PANEL_BG);
     // 边框（上 + 左高光、下 + 右暗边）
-    let border = Color::new(0.35, 0.5, 0.7, 0.35);
+    let border = Color::new(0.216, 0.216, 0.227, 0.9); // #37373a
     draw_line(x, y, x + w, y, 1.0, border);
     draw_line(x, y, x, y + h, 1.0, border);
     draw_line(
@@ -1730,7 +1740,7 @@ pub fn draw_panel(x: f32, y: f32, w: f32, h: f32) {
         x + w,
         y + h,
         1.0,
-        Color::new(0.15, 0.22, 0.32, 0.3),
+        Color::new(0.216, 0.216, 0.227, 0.55),
     );
     draw_line(
         x + w,
@@ -1738,6 +1748,6 @@ pub fn draw_panel(x: f32, y: f32, w: f32, h: f32) {
         x + w,
         y + h,
         1.0,
-        Color::new(0.15, 0.22, 0.32, 0.3),
+        Color::new(0.216, 0.216, 0.227, 0.55),
     );
 }

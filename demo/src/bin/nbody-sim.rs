@@ -19,6 +19,9 @@ fn body_color(name: &str) -> macroquad::color::Color {
         n if n.contains("Earth") => COLOR_EARTH,
         n if n.contains("Mars") => COLOR_MARS,
         n if n.contains("Jupiter") => COLOR_JUPITER,
+        n if n.contains("Saturn") => COLOR_SATURN,
+        n if n.contains("Uranus") => COLOR_URANUS,
+        n if n.contains("Neptune") => COLOR_NEPTUNE,
         n if n.contains("Moon") || n.contains("moon") => COLOR_MOON,
         _ => macroquad::color::Color::new(0.6, 0.6, 0.6, 1.0),
     }
@@ -39,8 +42,8 @@ async fn viz_main(scene_path: String) {
 
     let mut runtime = deepspace::scene::SceneRuntime::new(&config);
 
-    // 加载自定义字体
-    load_custom_font("assets/fonts/Roboto-Regular.ttf").await;
+    // 加载自定义字体（NASA Eyes 风格：Metropolis）
+    load_custom_font(FONT_PATH).await;
 
     let n = runtime.sys.bodies.len();
     let mut trails: Vec<Trail> = (0..n).map(|_| Trail::new(200)).collect();

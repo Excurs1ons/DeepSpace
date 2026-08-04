@@ -33,9 +33,8 @@ async fn viz_main(args: CliArgs) {
     let mut time_warp: f64 = 1.0;
     let mut app = demo::app::SimulationApp::new(&args);
 
-    // 加载自定义字体（使用项目的 Roboto 字体）
-    // 相对于可执行文件运行目录的路径，开发时为项目根目录
-    load_custom_font("assets/fonts/Roboto-Regular.ttf").await;
+    // 加载自定义字体（NASA Eyes 风格：Metropolis）
+    load_custom_font(FONT_PATH).await;
 
     let mut flight_path = Trail::new(8000);
     let mut predicted_path: Vec<Vec3> = Vec::new();
