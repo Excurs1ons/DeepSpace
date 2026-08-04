@@ -61,13 +61,28 @@ async fn viz_main(scene_path: String) {
     camera.max_distance = (max_dist * 50.0) as f32;
     camera.min_distance = (max_dist * 0.01) as f32;
 
+    // NASA Eyes 风格：星空 + 时间控制条 + 点击选中
+    let stars = StarField::new(600, 0x5EED);
+    let mut time_bar = TimeControlBar::new();
+    let mut click = ClickDetector::new();
+    let mut selected: Option<usize> = None;
+
     loop {
         camera.update();
         if is_key_down(KeyCode::Escape) {
             break;
         }
-
-        runtime.step();
+        time_bar.update();
+        // 窗口尺寸（点击检测 / 渲染共用）
+        let sw = screen_width();
+        let sh = screen_height();
+        if !time_bar.paused {
+            // 倍率驱动的步进：rate 为 1 时等价于原 1 步/帧
+            let steps = time_bar.rate.max(0.001) as usize;
+            for _ in 0..steps {
+                runtime.step();
+            }
+        }
 
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
             if i < trails.len() {
@@ -75,42 +90,80 @@ async fn viz_main(scene_path: String) {
             }
         }
 
+        // 点击选中（短按，区分拖拽）
+        if click.update() {
+            let (mx, my) = mouse_position();
+            let mut best: Option<(usize, f32)> = None;
+            for (i, body) in runtime.sys.bodies.iter().enumerate() {
+                let (cx, cy) = camera.project_2d(to_mvec3(body.position), sw, sh);
+                let d = (mx - cx) * (mx - cx) + (my - cy) * (my - cy);
+                if d < 40.0 * 40.0 && best.is_none_or(|(_, bd)| d < bd) {
+                    best = Some((i, d));
+                }
+            }
+            selected = best.map(|(i, _)| i);
+        }
+
+        // 跟随选中天体（相机 target 平滑趋近）
+        if let Some(idx) = selected {
+            if let Some(body) = runtime.sys.bodies.get(idx) {
+                camera.target = camera.target.lerp(to_mvec3(body.position), 0.1);
+            }
+        }
+
         // -----------------------------------------------------------------
         // 2D 正交投影渲染（不使用 3D 管线，避免天文尺度下 f32 精度问题）
         // -----------------------------------------------------------------
-        let sw = screen_width();
-        let sh = screen_height();
-
         let s = ui_scale();
 
-        // 绘制轨道尾迹
+        // 深空背景 + 恒星（NASA Eyes）
+        clear_background(COLOR_SPACE_BG);
+        stars.draw(&camera, sw, sh);
+
+        // 轨道环（每颗天体绕质心一条半透明环 — asteroids 首页风格）
+        for body in runtime.sys.bodies.iter() {
+            let center = to_mvec3(body.position);
+            let radius = center.length();
+            if radius > 0.0 {
+                let c = body_color(&body.name);
+                draw_orbit_ring_2d(
+                    &camera,
+                    Vec3::ZERO,
+                    radius,
+                    Vec3::Y,
+                    sw,
+                    sh,
+                    Color::new(c.r * 0.6, c.g * 0.6, c.b * 0.6, 0.22),
+                );
+            }
+        }
+
+        // 渐变轨迹线（旧→新：蓝 → 天体本色）
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
             if i < trails.len() {
                 let pts = trails[i].points();
                 if pts.len() > 1 {
                     let c = body_color(&body.name);
-                    let trail_color = Color::new(c.r * 0.6, c.g * 0.6, c.b * 0.6, 0.4);
-                    draw_path_2d(&camera, &pts, sw, sh, trail_color);
+                    let old = Color::new(0.2, 0.45, 0.9, 0.35);
+                    let new = Color::new(c.r, c.g, c.b, 0.85);
+                    draw_gradient_path_2d(&camera, &pts, sw, sh, old, new);
                 }
             }
         }
 
-        // 绘制天体（2D 圆 + 标签）
+        // 发光天体（NASA Eyes 光晕）
         for body in runtime.sys.bodies.iter() {
             let pos = to_mvec3(body.position);
             let (cx, cy) = camera.project_2d(pos, sw, sh);
             // 天体半径投影到像素，最小 3px 保证可见
             let r_px = camera.len_to_px(body.radius as f32, sw, sh).max(3.0);
             let color = body_color(&body.name);
-
-            // 填充圆（用多层同心圆模拟填充）
-            draw_circle_2d(cx, cy, r_px, color);
-            if r_px > 4.0 {
-                draw_circle_2d(cx, cy, r_px * 0.7, color);
-                draw_circle_2d(cx, cy, r_px * 0.4, color);
-            }
-            // 中心点
-            draw_line(cx - 1.0, cy, cx + 1.0, cy, 2.0, color);
+            let intensity = if body.name.contains("Sun") || body.name.contains("sun") {
+                2.5
+            } else {
+                1.0
+            };
+            draw_glow_2d(cx, cy, r_px, color, intensity);
 
             // 名称标签
             text(
@@ -122,54 +175,93 @@ async fn viz_main(scene_path: String) {
             );
         }
 
+        // 选中光环
+        if let Some(idx) = selected {
+            if let Some(body) = runtime.sys.bodies.get(idx) {
+                let (cx, cy) = camera.project_2d(to_mvec3(body.position), sw, sh);
+                let r_px = camera.len_to_px(body.radius as f32, sw, sh).max(3.0);
+                draw_selection_ring(cx, cy, r_px);
+            }
+        }
+
         // -----------------------------------------------------------------
-        // HUD 文字
+        // HUD 文字（NASA Eyes 面板化）
         // -----------------------------------------------------------------
+        // 左上信息面板
+        let panel_w = 300.0 * s;
+        let panel_h = 130.0 * s;
+        draw_panel(10.0 * s, 40.0 * s, panel_w, panel_h);
         text(
             format!("Scene: {}", config.name),
-            10.0,
-            30.0 * s,
-            28.0 * s,
+            20.0 * s,
+            60.0 * s,
+            24.0 * s,
             WHITE,
         );
         text(
             format!("Time: {:.2e} s", runtime.sys.time),
-            10.0,
-            58.0 * s,
-            24.0 * s,
-            LIGHTGRAY,
-        );
-        text(format!("Bodies: {n}"), 10.0, 86.0 * s, 24.0 * s, LIGHTGRAY);
-        text(
-            format!("dt: {:.1e} s", config.dt),
-            10.0,
-            110.0 * s,
-            24.0 * s,
-            LIGHTGRAY,
-        );
-        text(
-            "Left-drag: Rotate | Scroll: Zoom | ESC: Exit",
-            10.0,
-            sh - 30.0 * s,
             20.0 * s,
-            Color::new(0.7, 0.8, 0.9, 0.9),
+            88.0 * s,
+            18.0 * s,
+            LIGHTGRAY,
         );
+        text(
+            format!("Bodies: {n}   dt: {:.1e} s", config.dt),
+            20.0 * s,
+            112.0 * s,
+            18.0 * s,
+            LIGHTGRAY,
+        );
+        if let Some(idx) = selected {
+            if let Some(body) = runtime.sys.bodies.get(idx) {
+                text(
+                    format!("Track: {}", body.name),
+                    20.0 * s,
+                    142.0 * s,
+                    18.0 * s,
+                    body_color(&body.name),
+                );
+            }
+        }
 
-        // 天体列表面板
+        // 天体列表面板（右侧）
         let lx = sw - 260.0 * s;
-        text("Celestial Bodies", lx, 30.0 * s, 24.0 * s, WHITE);
+        let list_h = (runtime.sys.bodies.len() as f32 * 28.0 * s) + 40.0 * s;
+        draw_panel(lx, 30.0 * s, 250.0 * s, list_h);
+        text("Celestial Bodies", lx + 10.0 * s, 50.0 * s, 20.0 * s, WHITE);
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
-            let y = 56.0 * s + i as f32 * 28.0 * s;
+            let y = 76.0 * s + i as f32 * 28.0 * s;
             let c = body_color(&body.name);
-            draw_rectangle(lx, y - 2.0 * s, 16.0 * s, 16.0 * s, c);
+            draw_rectangle(lx + 10.0 * s, y - 2.0 * s, 16.0 * s, 16.0 * s, c);
+            let label = if selected == Some(i) {
+                format!("▶ {}  M={:.2e}kg", body.name, body.mass)
+            } else {
+                format!("{}  M={:.2e}kg", body.name, body.mass)
+            };
             text(
-                format!("{}  M={:.2e}kg", body.name, body.mass),
-                lx + 22.0 * s,
+                &label,
+                lx + 32.0 * s,
                 y + 12.0 * s,
-                20.0 * s,
-                LIGHTGRAY,
+                18.0 * s,
+                if selected == Some(i) {
+                    Color::new(1.0, 0.85, 0.4, 1.0)
+                } else {
+                    LIGHTGRAY
+                },
             );
         }
+
+        // 底部时间控制条（NASA Eyes）
+        time_bar.draw(runtime.sys.time);
+
+        // 操作提示（时间条上方一行）
+        text(
+            "Left-drag: Rotate | Click: Select/Track | Scroll: Zoom | ESC: Exit",
+            10.0,
+            sh - 46.0 * s,
+            16.0 * s,
+            Color::new(0.5, 0.6, 0.7, 0.8),
+        );
 
         next_frame().await;
     }

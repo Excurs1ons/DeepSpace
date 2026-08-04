@@ -55,6 +55,11 @@ async fn viz_main(args: CliArgs) {
     camera.min_distance = (earth_radius * 0.005).max(1000.0); // ≈32km, 不会穿入火箭
     let mut track_rocket = true;
 
+    // NASA Eyes 风格：星空 + 时间控制条（显示时间，保留原 ←→ 倍率逻辑）
+    let stars = StarField::new(600, 0x870C4);
+    let mut time_bar = TimeControlBar::new();
+    time_bar.paused = false;
+
     loop {
         // -----------------------------------------------------------------
         // 1. 输入
@@ -65,6 +70,10 @@ async fn viz_main(args: CliArgs) {
         }
         if is_key_pressed(KeyCode::T) {
             track_rocket = !track_rocket;
+        }
+        // Space 暂停（覆盖原 time_warp 为 0）
+        if is_key_pressed(KeyCode::Space) {
+            time_bar.paused = !time_bar.paused;
         }
         // 时间倍率：基数为 2，范围 [-4096, 4096]
         // 正向：0.001 → 0.002 → 0.004 → ... → 1 → 2 → 4 → ... → 4096
@@ -94,11 +103,17 @@ async fn viz_main(args: CliArgs) {
                 time_warp = (time_warp * 2.0).max(-4096.0);
             }
         }
+        // 同步倍率显示
+        if time_bar.paused {
+            time_bar.rate = 0.0;
+        } else {
+            time_bar.rate = time_warp.abs();
+        }
 
         // -----------------------------------------------------------------
         // 2. 物理步进（基于真实帧间隔 × 时间倍率，帧率无关，支持倒放）
         // -----------------------------------------------------------------
-        if !app.mission_complete {
+        if !app.mission_complete && !time_bar.paused {
             let real_dt = get_frame_time() as f64; // 真实秒数
             let sim_dt = real_dt * time_warp; // 可为负（倒放）
             let n_substeps = ((sim_dt.abs() / 0.016).ceil().max(1.0)) as usize;
@@ -159,6 +174,10 @@ async fn viz_main(args: CliArgs) {
         let sh = screen_height();
         let s = ui_scale();
 
+        // 深空背景 + 恒星（NASA Eyes）
+        clear_background(COLOR_SPACE_BG);
+        stars.draw(&camera, sw, sh);
+
         // 空间参考网格
         draw_grid_2d(&camera, earth_radius, sw, sh);
 
@@ -205,10 +224,17 @@ async fn viz_main(args: CliArgs) {
             );
         }
 
-        // 飞行路径（历史轨迹）
+        // 飞行路径（历史轨迹，NASA Eyes 渐变：蓝→橙）
         let flight_pts = flight_path.points();
         if flight_pts.len() > 1 {
-            draw_path_2d(&camera, &flight_pts, sw, sh, COLOR_TRAJECTORY);
+            draw_gradient_path_2d(
+                &camera,
+                &flight_pts,
+                sw,
+                sh,
+                Color::new(0.2, 0.5, 0.9, 0.35),
+                Color::new(1.0, 0.75, 0.3, 0.9),
+            );
         }
 
         // 预测轨道线（虚线）
@@ -223,6 +249,12 @@ async fn viz_main(args: CliArgs) {
         // 火箭标记 + 速度方向箭头
         let rpos = to_mvec3(*app.vessel.body.get_position());
         let vel = *app.vessel.body.get_velocity();
+        // NASA Eyes 发光火箭（投影光晕 + 原标记）
+        let (rx, ry) = camera.project_2d(rpos, sw, sh);
+        let marker_r = camera
+            .len_to_px(2000.0_f32.max(earth_radius * 0.003), sw, sh)
+            .max(2.5);
+        draw_glow_2d(rx, ry, marker_r * 0.8, COLOR_SHIP, 1.4);
         draw_rocket_2d(&camera, rpos, to_mvec3(vel), earth_radius, sw, sh);
 
         // -----------------------------------------------------------------
@@ -424,10 +456,13 @@ async fn viz_main(args: CliArgs) {
         text(
             "Left-drag: Rotate | Scroll: Zoom | T: Track | ←→: Warp | ESC: Exit",
             10.0,
-            screen_height() - 30.0 * s,
+            screen_height() - 54.0 * s,
             20.0 * s,
             Color::new(0.7, 0.8, 0.9, 0.9),
         );
+
+        // 底部时间控制条（NASA Eyes）
+        time_bar.draw(app.simulation_time);
 
         next_frame().await;
     }

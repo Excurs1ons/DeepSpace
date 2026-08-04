@@ -4,7 +4,10 @@
 
 use macroquad::camera::{set_camera, set_default_camera, Camera3D};
 use macroquad::color::Color;
-use macroquad::input::{is_mouse_button_down, mouse_position, mouse_wheel, MouseButton};
+use macroquad::input::{
+    is_key_pressed, is_mouse_button_down, is_mouse_button_pressed, is_mouse_button_released,
+    mouse_position, mouse_wheel, KeyCode, MouseButton,
+};
 use macroquad::math::{Quat, Vec3};
 use macroquad::models::{draw_line_3d, draw_sphere};
 use macroquad::shapes::{draw_line, draw_rectangle};
@@ -1355,5 +1358,386 @@ pub fn draw_world_status_bar(time_s: f64, entity_count: usize, event_count: usiz
         20.0 * s,
         16.0 * s,
         Color::new(0.75, 0.9, 1.0, 1.0),
+    );
+}
+
+// =====================================================================
+// NASA Eyes 风格渲染原语
+//
+// 参考视觉：https://eyes.nasa.gov/apps/asteroids/ 与
+//          https://eyes.nasa.gov/apps/solar-system/
+// 深空黑背景 + 恒星视差 + 发光天体 + 半透明轨道环 + 渐变轨迹
+// + 底部时间控制条 + 跟随选中光环
+// =====================================================================
+
+/// 简单 xorshift RNG（不引入外部依赖）
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn new(seed: u64) -> Self {
+        Self(seed.max(1))
+    }
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+    /// [0,1) 均匀
+    fn f32(&mut self) -> f32 {
+        (self.next() >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
+/// NASA Eyes 深空背景色
+pub const COLOR_SPACE_BG: Color = Color::new(0.008, 0.01, 0.02, 1.0);
+
+/// 静态星空 — 单位球面上的固定星点，随相机旋转产生视差
+pub struct StarField {
+    stars: Vec<(f32, f32, f32, f32)>, // dir_x, dir_y, dir_z, brightness
+}
+
+impl StarField {
+    pub fn new(count: usize, seed: u64) -> Self {
+        let mut rng = Xorshift::new(seed);
+        let mut stars = Vec::with_capacity(count);
+        for _ in 0..count {
+            // 均匀球面分布（z + 方位角）
+            let z = rng.f32() * 2.0 - 1.0;
+            let a = rng.f32() * std::f32::consts::TAU;
+            let r = (1.0 - z * z).sqrt();
+            let b = 0.25 + rng.f32() * 0.75; // 亮度 0.25~1.0
+            stars.push((r * a.cos(), z, r * a.sin(), b));
+        }
+        Self { stars }
+    }
+
+    /// 绘制星空。星点放在以相机目标为中心的远距离球面上，
+    /// 距离随相机 distance 缩放，保证永远在场景之后且投影稳定。
+    pub fn draw(&self, camera: &OrbitalCamera, sw: f32, sh: f32) {
+        let far = (camera.distance * 800.0).max(1.0e7);
+        let base = ui_scale();
+        for &(dx, dy, dz, b) in &self.stars {
+            let pos = camera.target + Vec3::new(dx, dy, dz) * far;
+            let (x, y) = camera.project_2d(pos, sw, sh);
+            if x < -4.0 || x > sw + 4.0 || y < -4.0 || y > sh + 4.0 {
+                continue;
+            }
+            // 亮度越高星点越大越亮，带轻微冷色调
+            let size = if b > 0.85 {
+                1.8 * base
+            } else if b > 0.6 {
+                1.3 * base
+            } else {
+                0.9 * base
+            };
+            draw_rectangle(
+                x,
+                y,
+                size,
+                size,
+                Color::new(b * 0.85, b * 0.88, b * 1.0, b * 0.9),
+            );
+        }
+    }
+}
+
+/// 绘制发光天体 — NASA Eyes 风格的光晕分层（白热核心 + 色晕）
+///
+/// - `cx`, `cy`: 屏幕中心
+/// - `r_px`: 天体核心半径（像素）
+/// - `color`: 天体本色（光晕用同色低 alpha 扩散）
+/// - `intensity`: 光晕强度（太阳等大热源 >1，行星 ~1，小物体 <1）
+pub fn draw_glow_2d(cx: f32, cy: f32, r_px: f32, color: Color, intensity: f32) {
+    if r_px < 0.5 {
+        return;
+    }
+    // 外光晕（3 层衰减）
+    draw_circle_2d(
+        cx,
+        cy,
+        r_px * 3.4,
+        Color::new(color.r, color.g, color.b, 0.08 * intensity),
+    );
+    draw_circle_2d(
+        cx,
+        cy,
+        r_px * 2.1,
+        Color::new(color.r, color.g, color.b, 0.18 * intensity),
+    );
+    draw_circle_2d(
+        cx,
+        cy,
+        r_px * 1.3,
+        Color::new(color.r, color.g, color.b, 0.4 * intensity),
+    );
+    // 白热核心（NASA Eyes 天体中心偏白）
+    draw_circle_2d(cx, cy, r_px * 0.7, Color::new(0.95, 0.97, 1.0, 0.85));
+    // 本体
+    draw_circle_2d(cx, cy, r_px, color);
+}
+
+/// 绘制轨道环 — 3D 圆在透视下的椭圆投影（细线、半透明）
+///
+/// 对应 asteroids 首页每颗小行星一条轨道环的视觉。
+/// 轨道平面由 `normal` 决定（默认 Y 轴 = XZ 平面）。
+pub fn draw_orbit_ring_2d(
+    camera: &OrbitalCamera,
+    center: Vec3,
+    radius: f32,
+    normal: Vec3,
+    sw: f32,
+    sh: f32,
+    color: Color,
+) {
+    if radius <= 0.0 {
+        return;
+    }
+    let n = normal.normalize();
+    // 构造轨道平面正交基
+    let u = if n.y.abs() > 0.95 {
+        n.cross(Vec3::X).normalize()
+    } else {
+        n.cross(Vec3::Y).normalize()
+    };
+    let v = n.cross(u).normalize();
+
+    let segs = 96u32;
+    let step = std::f32::consts::TAU / segs as f32;
+    let mut prev = None;
+    for i in 0..=segs {
+        let a = (i % segs) as f32 * step;
+        let p3d = center + (u * a.cos() + v * a.sin()) * radius;
+        let (x, y) = camera.project_2d(p3d, sw, sh);
+        if let Some((px, py)) = prev {
+            draw_line(px, py, x, y, 1.0, color);
+        }
+        prev = Some((x, y));
+    }
+}
+
+/// 线性插值颜色
+fn lerp_color(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    Color::new(
+        a.r + (b.r - a.r) * t,
+        a.g + (b.g - a.g) * t,
+        a.b + (b.b - a.b) * t,
+        a.a + (b.a - a.a) * t,
+    )
+}
+
+/// 绘制渐变轨迹线 — 老点偏蓝、新点偏橙（NASA Eyes 速度梯度）
+///
+/// 每段按点在序列中的位置插值 `old_color` → `new_color`。
+pub fn draw_gradient_path_2d(
+    camera: &OrbitalCamera,
+    points: &[Vec3],
+    sw: f32,
+    sh: f32,
+    old_color: Color,
+    new_color: Color,
+) {
+    let n = points.len();
+    if n < 2 {
+        return;
+    }
+    let denom = (n - 1) as f32;
+    for (i, w) in points.windows(2).enumerate() {
+        let t = i as f32 / denom;
+        let c = lerp_color(old_color, new_color, t);
+        let (x1, y1) = camera.project_2d(w[0], sw, sh);
+        let (x2, y2) = camera.project_2d(w[1], sw, sh);
+        draw_line(x1, y1, x2, y2, 1.2, c);
+    }
+}
+
+/// 绘制选中光环 — NASA Eyes 跟随目标的白色双环准星
+pub fn draw_selection_ring(cx: f32, cy: f32, r_px: f32) {
+    if r_px < 2.0 {
+        return;
+    }
+    let c = Color::new(0.85, 0.9, 1.0, 0.85);
+    draw_circle_2d(cx, cy, r_px * 1.9, c);
+    draw_circle_2d(cx, cy, r_px * 0.9, Color::new(0.85, 0.9, 1.0, 0.35));
+    // 十字准星
+    let cross = (r_px * 2.6).max(6.0);
+    draw_line(cx - cross, cy, cx + cross, cy, 1.0, c);
+    draw_line(cx, cy - cross, cx, cy + cross, 1.0, c);
+}
+
+/// 把秒格式化为 "T+ 1d 05:12:33"（NASA Eyes 风格 UTC 读数）
+pub fn format_sim_time(time_s: f64) -> String {
+    let t = time_s.abs().max(0.0) as u64;
+    let days = t / 86_400;
+    let h = (t % 86_400) / 3_600;
+    let m = (t % 3_600) / 60;
+    let sec = t % 60;
+    if days > 0 {
+        format!("T+ {}d {:02}:{:02}:{:02}", days, h, m, sec)
+    } else {
+        format!("T+ {:02}:{:02}:{:02}", h, m, sec)
+    }
+}
+
+/// NASA Eyes 底部时间控制条 — 播放/暂停 + 时间倍率 + 模拟时间
+///
+/// 按键：Space 播放/暂停，`+`/`=` 倍率 ×2，`-` 倍率 ÷2。
+#[derive(Clone)]
+pub struct TimeControlBar {
+    pub paused: bool,
+    pub rate: f64,
+}
+
+impl Default for TimeControlBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TimeControlBar {
+    pub fn new() -> Self {
+        Self {
+            paused: false,
+            rate: 1.0,
+        }
+    }
+    /// 读取键盘更新状态，返回是否发生了暂停切换（用于音效/闪烁）
+    pub fn update(&mut self) -> bool {
+        let mut toggled = false;
+        if is_key_pressed(KeyCode::Space) {
+            self.paused = !self.paused;
+            toggled = true;
+        }
+        if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
+            self.rate = (self.rate * 2.0).min(1.0e6);
+        }
+        if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
+            self.rate = (self.rate / 2.0).max(0.001);
+        }
+        toggled
+    }
+
+    /// 绘制底部细条（右侧叠加速率、左侧模拟时间）
+    pub fn draw(&self, time_s: f64) {
+        let s = ui_scale();
+        let w = screen_width();
+        let h = 34.0 * s;
+        let y = screen_height() - h;
+
+        // 半透明深色底 + 顶边高光细线
+        draw_rectangle(0.0, y, w, h, Color::new(0.01, 0.02, 0.04, 0.82));
+        draw_line(0.0, y, w, y, 1.0, Color::new(0.3, 0.45, 0.65, 0.35));
+
+        // 播放/暂停图标
+        let ic = Color::new(0.75, 0.9, 1.0, 0.95);
+        let (icon, ix) = if self.paused {
+            ("▶", 22.0 * s)
+        } else {
+            ("⏸", 18.0 * s)
+        };
+        text(icon, ix, y + h * 0.62, 20.0 * s, ic);
+
+        // 模拟时间（左侧，居中于条）
+        let tlabel = format_sim_time(time_s);
+        let tw = 240.0 * s;
+        text(
+            &tlabel,
+            w / 2.0 - tw / 2.0,
+            y + h * 0.62,
+            18.0 * s,
+            Color::new(0.9, 0.94, 1.0, 1.0),
+        );
+
+        // 倍率（右侧）
+        let rate_label = if self.rate.abs() < 1.0 {
+            format!("×{:.3}", self.rate)
+        } else {
+            format!("×{:.0}", self.rate)
+        };
+        let rate_color = if self.paused {
+            Color::new(0.6, 0.65, 0.75, 0.9)
+        } else {
+            Color::new(1.0, 0.85, 0.4, 1.0)
+        };
+        let rate_w = 120.0 * s;
+        text(
+            &rate_label,
+            w - rate_w - 16.0 * s,
+            y + h * 0.62,
+            18.0 * s,
+            rate_color,
+        );
+
+        // 快捷键提示（右下角，弱化）
+        text(
+            "Space 暂停  +/− 倍率  ESC 退出",
+            w - 320.0 * s,
+            y + h * 0.28,
+            12.0 * s,
+            Color::new(0.4, 0.5, 0.6, 0.8),
+        );
+    }
+}
+
+/// 左键短按检测 — 区分"拖拽旋转"与"点击选中"
+///
+/// 返回 true 表示本次点击（按下到释放位移 < 5px）。
+#[derive(Clone, Default)]
+pub struct ClickDetector {
+    pressed_pos: Option<(f32, f32)>,
+}
+
+impl ClickDetector {
+    pub fn new() -> Self {
+        Self { pressed_pos: None }
+    }
+
+    /// 每帧调用；返回 true 表示一次有效的点击
+    pub fn update(&mut self) -> bool {
+        if is_mouse_button_pressed(MouseButton::Left) {
+            self.pressed_pos = Some(mouse_position());
+        }
+        if is_mouse_button_released(MouseButton::Left) {
+            if let Some((px, py)) = self.pressed_pos.take() {
+                let (mx, my) = mouse_position();
+                let dx = mx - px;
+                let dy = my - py;
+                if dx * dx + dy * dy < 25.0 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// 深色半透明面板底色（NASA Eyes HUD）
+pub const COLOR_PANEL_BG: Color = Color::new(0.02, 0.03, 0.05, 0.82);
+
+/// 绘制面板背景 + 细边框（NASA Eyes HUD 风格）
+pub fn draw_panel(x: f32, y: f32, w: f32, h: f32) {
+    draw_rectangle(x, y, w, h, COLOR_PANEL_BG);
+    // 边框（上 + 左高光、下 + 右暗边）
+    let border = Color::new(0.35, 0.5, 0.7, 0.35);
+    draw_line(x, y, x + w, y, 1.0, border);
+    draw_line(x, y, x, y + h, 1.0, border);
+    draw_line(
+        x,
+        y + h,
+        x + w,
+        y + h,
+        1.0,
+        Color::new(0.15, 0.22, 0.32, 0.3),
+    );
+    draw_line(
+        x + w,
+        y,
+        x + w,
+        y + h,
+        1.0,
+        Color::new(0.15, 0.22, 0.32, 0.3),
     );
 }

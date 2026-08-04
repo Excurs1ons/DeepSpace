@@ -184,13 +184,23 @@ async fn run_3d() {
 
     let mut cam = OrbitalCamera::new(Vec3::new(0.0, 6_500_000.0, 0.0), 200_000.0);
 
+    // NASA Eyes 风格：星空 + 时间控制条 + 点击选中
+    let stars = StarField::new(600, 0x1E4E0);
+    let mut time_bar = TimeControlBar::new();
+    let mut click = ClickDetector::new();
+    let mut selected: Option<u64> = None;
+
     loop {
         let _dt = get_frame_time().min(0.05);
         cam.update();
+        time_bar.update();
 
-        // 推进世界（实时 1x，每帧最多 10 步保证稳定）
-        for _ in 0..10 {
-            w.step();
+        // 推进世界（时间条控制，rate 为 1 时等价于原 10 步/帧）
+        if !time_bar.paused {
+            let steps = (10.0 * time_bar.rate).round().max(0.0) as usize;
+            for _ in 0..steps {
+                w.step();
+            }
         }
 
         // 轨迹：实体表变化时重建
@@ -208,18 +218,43 @@ async fn run_3d() {
             }
         }
 
-        clear_background(Color::new(0.02, 0.02, 0.04, 1.0));
+        // 点击选中（短按，区分拖拽）
+        let sw = screen_width();
+        let sh = screen_height();
+        if click.update() {
+            let (mx, my) = mouse_position();
+            let mut best: Option<(u64, f32)> = None;
+            for e in w.entities.iter() {
+                if e.kind == EntityKind::Body {
+                    continue;
+                }
+                let (cx, cy) = cam.project_2d(to_mvec3(e.position), sw, sh);
+                let d = (mx - cx) * (mx - cx) + (my - cy) * (my - cy);
+                if d < 40.0 * 40.0 && best.is_none_or(|(_, bd)| d < bd) {
+                    best = Some((e.id, d));
+                }
+            }
+            selected = best.map(|(id, _)| id);
+        }
+
+        // 跟随选中实体（相机 target 平滑趋近）
+        if let Some(id) = selected {
+            if let Some(e) = w.entities.iter().find(|e| e.id == id) {
+                cam.target = cam.target.lerp(to_mvec3(e.position), 0.1);
+            }
+        }
+
+        // 深空背景 + 恒星
+        clear_background(COLOR_SPACE_BG);
+        stars.draw(&cam, sw, sh);
 
         // 3D 相机
         set_camera(&cam.get_camera3d());
 
-        // 地球
+        // 地球（发光风格：3D 球体 + 2D 光晕由后处理层处理）
         draw_planet(Vec3::ZERO, 6_371_000.0, COLOR_EARTH);
-        // 轨迹
-        for tr in &trails {
-            draw_path(&tr.points(), COLOR_TRAJECTORY);
-        }
-        // 实体位置
+
+        // 实体位置（3D 球体）
         for e in w.entities.iter() {
             if e.kind == EntityKind::Body {
                 continue;
@@ -231,18 +266,55 @@ async fn run_3d() {
 
         set_default_camera();
 
-        // 统一 HUD
+        // 渐变轨迹（2D 叠加在 3D 之上）
+        for tr in &trails {
+            let pts = tr.points();
+            if pts.len() > 1 {
+                draw_gradient_path_2d(
+                    &cam,
+                    &pts,
+                    sw,
+                    sh,
+                    Color::new(0.2, 0.5, 0.9, 0.3),
+                    Color::new(1.0, 0.75, 0.3, 0.9),
+                );
+            }
+        }
+
+        // 发光实体（2D 光晕叠加在 3D 球体投影上 — NASA Eyes）
+        for e in w.entities.iter() {
+            if e.kind == EntityKind::Body {
+                continue;
+            }
+            let c = entity_kind_color(e.kind);
+            let (cx, cy) = cam.project_2d(to_mvec3(e.position), sw, sh);
+            let r_px = cam.len_to_px(15_000.0, sw, sh).max(3.0);
+            draw_glow_2d(cx, cy, r_px, c, 1.2);
+        }
+
+        // 选中光环
+        if let Some(id) = selected {
+            if let Some(e) = w.entities.iter().find(|e| e.id == id) {
+                let (cx, cy) = cam.project_2d(to_mvec3(e.position), sw, sh);
+                let r_px = cam.len_to_px(15_000.0, sw, sh).max(3.0);
+                draw_selection_ring(cx, cy, r_px);
+            }
+        }
+
+        // 统一 HUD（面板化）
         let rows = hud_rows(&w);
         let events = event_log(&w, 8);
         draw_world_status_bar(w.time(), w.entities.len(), w.events.len());
         draw_entity_hud_panel(&rows, 20.0, 60.0);
-        draw_event_log_panel(&events, 20.0, screen_height() - 260.0);
+        draw_event_log_panel(&events, 20.0, screen_height() - 320.0);
+
+        // 底部时间控制条（NASA Eyes）
+        time_bar.draw(w.time());
 
         // 退出
         if is_key_pressed(KeyCode::Escape) {
             break;
         }
-
         next_frame().await;
     }
 }
