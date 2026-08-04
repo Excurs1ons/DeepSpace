@@ -128,13 +128,13 @@ async fn viz_main(args: CliArgs) {
             let alt = current_pos.length() - app.earth.get_radius();
             let pred_steps = 300;
             let step_dt = if alt < 100_000.0 {
-                1.0    // 大气层内：每步 1s，看清转弯
+                1.0 // 大气层内：每步 1s，看清转弯
             } else if alt < 1_000_000.0 {
-                5.0    // 上升段：每步 5s
+                5.0 // 上升段：每步 5s
             } else if alt < 100_000_000.0 {
-                60.0   // 近地轨道：每步 1min
+                60.0 // 近地轨道：每步 1min
             } else {
-                600.0  // 深空：每步 10min
+                600.0 // 深空：每步 10min
             };
             let raw = predict_trajectory(
                 current_pos,
@@ -248,14 +248,14 @@ async fn viz_main(args: CliArgs) {
         let y0 = 110.0 * s;
 
         text(
-            &format!("Mission: {}", app.config.mission_name),
+            format!("Mission: {}", app.config.mission_name),
             10.0,
             30.0 * s,
             32.0 * s,
             WHITE,
         );
         text(
-            &format!("T+ {:.1}s", app.simulation_time),
+            format!("T+ {:.1}s", app.simulation_time),
             10.0,
             60.0 * s,
             28.0 * s,
@@ -263,84 +263,84 @@ async fn viz_main(args: CliArgs) {
         );
 
         text(
-            &format!("Phase: {}", app.mission_control.phase_name),
+            format!("Phase: {}", app.mission_control.phase_name),
             10.0,
             y0,
             24.0 * s,
             YELLOW,
         );
         text(
-            &format!("Altitude: {:.0} m", tel.altitude_m),
+            format!("Altitude: {:.0} m", tel.altitude_m),
             10.0,
             y0 + lh,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Velocity: {:.0} m/s", tel.velocity_mps),
+            format!("Velocity: {:.0} m/s", tel.velocity_mps),
             10.0,
             y0 + lh * 2.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Mass: {:.0} kg", app.vessel.body.get_mass()),
+            format!("Mass: {:.0} kg", app.vessel.body.get_mass()),
             10.0,
             y0 + lh * 3.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Thrust: {:.0} kN", tel.thrust_n / 1000.0),
+            format!("Thrust: {:.0} kN", tel.thrust_n / 1000.0),
             10.0,
             y0 + lh * 4.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Throttle: {:.0}%", tel.throttle_pct * 100.0),
+            format!("Throttle: {:.0}%", tel.throttle_pct * 100.0),
             10.0,
             y0 + lh * 5.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Mach: {:.2}", tel.mach),
+            format!("Mach: {:.2}", tel.mach),
             10.0,
             y0 + lh * 6.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Q: {:.0} Pa", tel.dynamic_pressure_pa),
+            format!("Q: {:.0} Pa", tel.dynamic_pressure_pa),
             10.0,
             y0 + lh * 7.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Stage: {}", app.vessel.current_stage),
+            format!("Stage: {}", app.vessel.current_stage),
             10.0,
             y0 + lh * 8.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Apoapsis: {:.0} km", tel.orbit.apoapsis_m / 1000.0),
+            format!("Apoapsis: {:.0} km", tel.orbit.apoapsis_m / 1000.0),
             10.0,
             y0 + lh * 9.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!("Periapsis: {:.0} km", tel.orbit.periapsis_m / 1000.0),
+            format!("Periapsis: {:.0} km", tel.orbit.periapsis_m / 1000.0),
             10.0,
             y0 + lh * 10.0,
             24.0 * s,
             dc,
         );
         text(
-            &format!(
+            format!(
                 "Orbit: {}",
                 if tel.orbit.is_bound {
                     "Bound"
@@ -354,48 +354,48 @@ async fn viz_main(args: CliArgs) {
             if tel.orbit.is_bound { GREEN } else { YELLOW },
         );
 
-		        // ---- 任务导航：从配置读取后续阶段转换 ----
-		        let mc = &app.mission_control;
-		        let current_phase = mc.phase_name.clone();
-	
-		        // 收集所有后续阶段转换的进度（从真实配置读取）
-	        let remaining_phases: Vec<NextPhaseDisplay> = mc
-	            .compute_all_remaining_phases(&app.vessel, &app.earth, app.moon_position())
-		            .iter()
-		            .map(|info| {
-		                let conditions: Vec<NextPhaseConditionDisplay> = info
-		                    .conditions
-		                    .iter()
-		                    .map(|c| NextPhaseConditionDisplay {
-		                        label: c.label.clone(),
-		                        current: c.current,
-		                        target: c.target,
-		                        progress: c.progress,
-		                        is_met: c.is_met,
-		                        is_boolean: c.is_boolean,
-		                    })
-		                    .collect();
-		                NextPhaseDisplay {
-		                    next_phase: info.next_phase.clone(),
-		                    conditions,
-		                    require_all: info.require_all,
-		                }
-		            })
-		            .collect();
-	
-	        let mission_state = MissionDisplayState {
-	            phase_name: current_phase,
-	            complete: app.mission_complete,
-	            outcome: mc.outcome.to_str().to_string(),
-	        };
-	
-	        let s = ui_scale();
-	
-	        // 右侧导航面板
-	        draw_phase_panel(&mission_state, screen_width() - 260.0 * s, 20.0 * s);
-	
-	        // 后续阶段面板（从配置读取的 phase_transitions）
-	        draw_remaining_phases_panel(&remaining_phases, screen_width() - 290.0 * s, 360.0 * s);
+        // ---- 任务导航：从配置读取后续阶段转换 ----
+        let mc = &app.mission_control;
+        let current_phase = mc.phase_name.clone();
+
+        // 收集所有后续阶段转换的进度（从真实配置读取）
+        let remaining_phases: Vec<NextPhaseDisplay> = mc
+            .compute_all_remaining_phases(&app.vessel, &app.earth, app.moon_position())
+            .iter()
+            .map(|info| {
+                let conditions: Vec<NextPhaseConditionDisplay> = info
+                    .conditions
+                    .iter()
+                    .map(|c| NextPhaseConditionDisplay {
+                        label: c.label.clone(),
+                        current: c.current,
+                        target: c.target,
+                        progress: c.progress,
+                        is_met: c.is_met,
+                        is_boolean: c.is_boolean,
+                    })
+                    .collect();
+                NextPhaseDisplay {
+                    next_phase: info.next_phase.clone(),
+                    conditions,
+                    require_all: info.require_all,
+                }
+            })
+            .collect();
+
+        let mission_state = MissionDisplayState {
+            phase_name: current_phase,
+            complete: app.mission_complete,
+            outcome: mc.outcome.to_str().to_string(),
+        };
+
+        let s = ui_scale();
+
+        // 右侧导航面板
+        draw_phase_panel(&mission_state, screen_width() - 260.0 * s, 20.0 * s);
+
+        // 后续阶段面板（从配置读取的 phase_transitions）
+        draw_remaining_phases_panel(&remaining_phases, screen_width() - 290.0 * s, 360.0 * s);
 
         let warp_color = if time_warp < -0.01 {
             Color::new(1.0, 0.2, 0.2, 1.0) // 红色 = 倒放

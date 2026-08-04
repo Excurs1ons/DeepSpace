@@ -11,9 +11,7 @@ use std::io::{BufWriter, Write};
 
 use deepspace::environment::{Atmosphere, Planet, ThermalSimulation};
 use deepspace::guidance::{FlightComputer, GuidanceState};
-use deepspace::simulation::{
-    MissionConfig, MissionControl, MissionOutcome, TelemetryData,
-};
+use deepspace::simulation::{MissionConfig, MissionControl, MissionOutcome, TelemetryData};
 use deepspace::vessel::{Part, PropellantType, Vessel};
 use deepspace::{Vec3, G};
 
@@ -583,11 +581,13 @@ impl SimulationApp {
         mission_control.tcm_target_dv = config.tcm.target_dv;
 
         // 初始化飞控计算机
-        let mut gc = deepspace::guidance::GuidanceConfig::default();
-        gc.algorithm = config.guidance.algorithm.clone();
-        gc.pitch_start_alt_m = config.guidance.pitch_start_alt_m;
-        gc.pitch_end_alt_m = config.guidance.pitch_end_alt_m;
-        gc.pitch_end_angle_deg = config.guidance.pitch_end_angle_deg;
+        let gc = deepspace::guidance::GuidanceConfig {
+            algorithm: config.guidance.algorithm.clone(),
+            pitch_start_alt_m: config.guidance.pitch_start_alt_m,
+            pitch_end_alt_m: config.guidance.pitch_end_alt_m,
+            pitch_end_angle_deg: config.guidance.pitch_end_angle_deg,
+            ..Default::default()
+        };
         let flight_computer = FlightComputer::from_config(&gc);
 
         // 激活第一级
@@ -657,7 +657,6 @@ impl SimulationApp {
             return;
         }
 
-
         // 天体轨道传播：使用圆周轨道近似替代线性漂移
         // 第 0 个天体（地球）固定在原点，其余天体绕其做圆周运动
         // 位置和速度同步绕轨道法线旋转，保持轨道元素不变
@@ -709,7 +708,9 @@ impl SimulationApp {
             let d = r.length();
             if d > 1.0 {
                 let acc = r.normalized() * (G * self.bodies[i].get_mass() / (d * d));
-                self.vessel.body.add_force(acc * self.vessel.body.get_mass());
+                self.vessel
+                    .body
+                    .add_force(acc * self.vessel.body.get_mass());
             }
         }
 
@@ -721,7 +722,6 @@ impl SimulationApp {
         let mach = speed / 340.0; // 海平面音速近似
 
         self.thermal.update(dt, speed, density, integrity);
-
 
         // 气动阻力（弹道系数 + 马赫数相关 Cd）
         if density > 0.0 && speed > 1.0 {
@@ -741,7 +741,7 @@ impl SimulationApp {
             let mut ref_area = if altitude > 100_000.0 { 50.0 } else { 100.0 };
             // 再入末端：海拔 < 15000m 三级降落伞（Orion 3 × 35m 主伞 ~2886m²）
             // 速度门限：仅亚音速（Mach < 0.8）展开，防止高空高速撕裂
-            if altitude < 15000.0 && altitude >= 0.0 && self.simulation_time > 500000.0 && mach < 0.8 {
+            if (0.0..15000.0).contains(&altitude) && self.simulation_time > 500000.0 && mach < 0.8 {
                 ref_area = if altitude < 1000.0 {
                     3000.0
                 } else if altitude < 5000.0 {
@@ -812,8 +812,8 @@ impl SimulationApp {
         let state = GuidanceState {
             altitude,
             velocity_mag: speed,
-            position: self.vessel.body.get_position().clone(),
-            velocity: self.vessel.body.get_velocity().clone(),
+            position: *self.vessel.body.get_position(),
+            velocity: *self.vessel.body.get_velocity(),
             mission_time: self.simulation_time,
             total_mass_kg: self.vessel.body.get_mass(),
             stage: self.vessel.current_stage,
@@ -874,7 +874,9 @@ impl SimulationApp {
         if self.mission_control.apogee_tcm_started && !self.mission_control.apogee_tcm_attempted {
             let tcm_vel = *self.vessel.body.get_velocity();
             if tcm_vel.length() > 1.0 {
-                self.vessel.body.set_orientation_from_dir(-tcm_vel.normalized());
+                self.vessel
+                    .body
+                    .set_orientation_from_dir(-tcm_vel.normalized());
             }
         }
 
@@ -992,7 +994,11 @@ impl SimulationApp {
                     t.thrust_n / 1000.0,
                 );
                 // 显示下一阶段进度
-                if let Some(info) = self.mission_control.compute_next_phase_info(&self.vessel, &self.earth, self.moon_position()) {
+                if let Some(info) = self.mission_control.compute_next_phase_info(
+                    &self.vessel,
+                    &self.earth,
+                    self.moon_position(),
+                ) {
                     let mut parts: Vec<String> = Vec::new();
                     for c in &info.conditions {
                         if c.is_boolean {
@@ -1002,9 +1008,15 @@ impl SimulationApp {
                             let pct = (c.progress * 100.0).min(99.9);
                             // 对比例类（<10）多显示一位小数
                             if c.target < 10.0 {
-                                parts.push(format!("{} {:.2}/{:.2} [{:.0}%]", c.label, c.current, c.target, pct));
+                                parts.push(format!(
+                                    "{} {:.2}/{:.2} [{:.0}%]",
+                                    c.label, c.current, c.target, pct
+                                ));
                             } else {
-                                parts.push(format!("{} {:.0}/{:.0} [{:.0}%]", c.label, c.current, c.target, pct));
+                                parts.push(format!(
+                                    "{} {:.0}/{:.0} [{:.0}%]",
+                                    c.label, c.current, c.target, pct
+                                ));
                             }
                         }
                     }

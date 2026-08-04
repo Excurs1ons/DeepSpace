@@ -598,8 +598,8 @@ pub fn draw_grid_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32)
     // 1. 纬线（平行圈）
     for &lat_deg in &LATITUDES {
         let lat = lat_deg.to_radians();
-        let r = earth_radius * lat.cos();       // 平行圈半径
-        let y = earth_radius * lat.sin();       // 平行圈高度
+        let r = earth_radius * lat.cos(); // 平行圈半径
+        let y = earth_radius * lat.sin(); // 平行圈高度
         let pixel_r = camera.len_to_px(r, sw, sh);
         let segs = (12.0 + pixel_r * 0.3).min(256.0) as u32;
         if segs < 4 {
@@ -654,9 +654,27 @@ pub fn draw_grid_2d(camera: &OrbitalCamera, earth_radius: f32, sw: f32, sh: f32)
     draw_line(zn.0, zn.1, zp.0, zp.1, 1.5, COLOR_GRID_AXIS);
 
     // 轴标签
-    text("X", xp.0 + 5.0 * s, xp.1 - 5.0 * s, 18.0 * s, COLOR_GRID_AXIS);
-    text("Y", yp.0 + 5.0 * s, yp.1 - 5.0 * s, 18.0 * s, COLOR_GRID_AXIS);
-    text("Z", zp.0 + 5.0 * s, zp.1 - 5.0 * s, 18.0 * s, COLOR_GRID_AXIS);
+    text(
+        "X",
+        xp.0 + 5.0 * s,
+        xp.1 - 5.0 * s,
+        18.0 * s,
+        COLOR_GRID_AXIS,
+    );
+    text(
+        "Y",
+        yp.0 + 5.0 * s,
+        yp.1 - 5.0 * s,
+        18.0 * s,
+        COLOR_GRID_AXIS,
+    );
+    text(
+        "Z",
+        zp.0 + 5.0 * s,
+        zp.1 - 5.0 * s,
+        18.0 * s,
+        COLOR_GRID_AXIS,
+    );
 }
 
 /// 投影绘制 2D 轨迹线
@@ -807,7 +825,6 @@ const ARTEMIS_PHASES: &[&str] = &[
 ];
 
 /// Artemis II 具体任务里程碑（细粒度事件步骤）
-
 /// 任务显示状态（由 3D 主循环计算后传入）
 pub struct MissionDisplayState {
     /// 数据驱动阶段名（直接来自 MissionControl.phase_name）
@@ -822,15 +839,15 @@ pub struct MissionDisplayState {
 fn phase_to_idx(name: &str) -> Option<usize> {
     // 严格匹配数据驱动阶段名，不做时间/距离启发式
     match name {
-        "PreLaunch" => Some(0),                        // PRE_LAUNCH
-        "Launch" => Some(1),                           // LAUNCH
-        "Ascent" | "MaxQ" => Some(2),                  // ASCENT
+        "PreLaunch" => Some(0),                                       // PRE_LAUNCH
+        "Launch" => Some(1),                                          // LAUNCH
+        "Ascent" | "MaxQ" => Some(2),                                 // ASCENT
         "Orbit" | "Staging" | "Coast" | "Circularization" => Some(3), // ORBIT
-        "TEI" => Some(4),                              // TLI
-        "Translunar" | "MissionEvents" => Some(5),     // TRANSLUNAR（去程统称）
-        "Reentry" => Some(8),                          // REENTRY
-        "Success" | "Failure" | "Abort" => Some(9),    // SUCCESS
-        _ => None,  // 不认识的新阶段名 → 不标记
+        "TEI" => Some(4),                                             // TLI
+        "Translunar" | "MissionEvents" => Some(5),                    // TRANSLUNAR（去程统称）
+        "Reentry" => Some(8),                                         // REENTRY
+        "Success" | "Failure" | "Abort" => Some(9),                   // SUCCESS
+        _ => None,                                                    // 不认识的新阶段名 → 不标记
     }
 }
 
@@ -844,12 +861,23 @@ pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
     let content_h = (item_start_y - y) + n_phases * line_h + 12.0 * s;
 
     // 半透明背景
-    draw_rectangle(x - 8.0 * s, y - 28.0 * s, panel_w + 16.0 * s, content_h + 8.0 * s,
-        Color::new(0.05, 0.05, 0.1, 0.75));
+    draw_rectangle(
+        x - 8.0 * s,
+        y - 28.0 * s,
+        panel_w + 16.0 * s,
+        content_h + 8.0 * s,
+        Color::new(0.05, 0.05, 0.1, 0.75),
+    );
 
     // 标题 + 当前实际阶段名
     text("PHASE", x, y, 24.0 * s, Color::new(0.7, 0.8, 1.0, 0.95));
-    text(&state.phase_name, x + 56.0 * s, y, 20.0 * s, Color::new(1.0, 0.9, 0.2, 1.0));
+    text(
+        &state.phase_name,
+        x + 56.0 * s,
+        y,
+        20.0 * s,
+        Color::new(1.0, 0.9, 0.2, 1.0),
+    );
 
     let current_idx = phase_to_idx(&state.phase_name);
 
@@ -858,9 +886,9 @@ pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
 
         let (icon, color) = if state.complete {
             ("\u{2713}", Color::new(0.4, 0.6, 0.6, 0.7))
-        } else if current_idx.map_or(false, |c| i < c) {
+        } else if current_idx.is_some_and(|c| i < c) {
             ("\u{2713}", Color::new(0.5, 0.7, 0.7, 0.7))
-        } else if current_idx.map_or(false, |c| i == c) {
+        } else if current_idx == Some(i) {
             ("\u{25B6}", Color::new(1.0, 0.9, 0.2, 1.0))
         } else {
             ("\u{25CB}", Color::new(0.5, 0.5, 0.6, 0.8))
@@ -877,7 +905,7 @@ pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
             _ => Color::new(1.0, 0.8, 0.2, 1.0),
         };
         text(
-            &format!("OUTCOME: {}", state.outcome),
+            format!("OUTCOME: {}", state.outcome),
             x,
             item_start_y + n_phases * line_h + 6.0 * s,
             22.0 * s,
@@ -886,7 +914,7 @@ pub fn draw_phase_panel(state: &MissionDisplayState, x: f32, y: f32) {
     }
 }
 
-/// 绘制任务里程碑面板（细粒度，右侧下方）
+// 绘制任务里程碑面板（细粒度，右侧下方）
 // =====================================================================
 // 后续阶段进度面板（数据驱动）
 // =====================================================================
@@ -920,7 +948,13 @@ pub fn draw_remaining_phases_panel(phases: &[NextPhaseDisplay], x: f32, y: f32) 
         Color::new(0.05, 0.05, 0.1, 0.75),
     );
 
-    text("UPCOMING PHASES", x, y, 22.0 * s, Color::new(0.7, 0.8, 1.0, 0.95));
+    text(
+        "UPCOMING PHASES",
+        x,
+        y,
+        22.0 * s,
+        Color::new(0.7, 0.8, 1.0, 0.95),
+    );
 
     let mut cy = y + header_h;
 
@@ -973,7 +1007,10 @@ pub fn draw_remaining_phases_panel(phases: &[NextPhaseDisplay], x: f32, y: f32) 
                 };
                 text(icon, x + 4.0 * s, cy, 16.0 * s, color);
                 text(
-                    &format!("{} {:.0}/{:.0} [{:.0}%]", cond.label, cond.current, cond.target, pct),
+                    format!(
+                        "{} {:.0}/{:.0} [{:.0}%]",
+                        cond.label, cond.current, cond.target, pct
+                    ),
                     x + 24.0 * s,
                     cy,
                     14.0 * s,
@@ -1031,14 +1068,21 @@ pub fn draw_next_phase_panel(state: &NextPhaseDisplay, x: f32, y: f32) {
     // 先计算总高度
     let header_h = 40.0 * s;
     let line_h = 24.0 * s;
-    let cond_h: f32 = state.conditions.iter().map(|c|
-        if c.is_boolean { line_h } else { 44.0 * s }
-    ).sum();
+    let cond_h: f32 = state
+        .conditions
+        .iter()
+        .map(|c| if c.is_boolean { line_h } else { 44.0 * s })
+        .sum();
     let content_h = header_h + 4.0 * s + cond_h + 8.0 * s;
 
     // 半透明背景
-    draw_rectangle(x - 8.0 * s, y - 26.0 * s, panel_w + 16.0 * s, content_h + 8.0 * s,
-        Color::new(0.05, 0.05, 0.1, 0.75));
+    draw_rectangle(
+        x - 8.0 * s,
+        y - 26.0 * s,
+        panel_w + 16.0 * s,
+        content_h + 8.0 * s,
+        Color::new(0.05, 0.05, 0.1, 0.75),
+    );
 
     // 标题
     text("NEXT", x, y, 22.0 * s, Color::new(0.7, 0.8, 1.0, 0.95));
@@ -1154,12 +1198,12 @@ pub fn from_mvec3(v: Vec3) -> deepspace::Vec3 {
 pub fn entity_kind_color(kind: deepspace::entity::EntityKind) -> Color {
     use deepspace::entity::EntityKind::*;
     match kind {
-        Rocket => Color::new(0.4, 0.9, 1.0, 1.0),   // 青 — 火箭
+        Rocket => Color::new(0.4, 0.9, 1.0, 1.0),     // 青 — 火箭
         Spacecraft => Color::new(0.6, 0.8, 1.0, 1.0), // 亮蓝 — 航天器
-        Missile => Color::new(1.0, 0.4, 0.3, 1.0),  // 红 — 拦截导弹
-        Icbm => Color::new(1.0, 0.7, 0.2, 1.0),     // 橙 — 弹道目标
-        Aircraft => Color::new(0.4, 1.0, 0.5, 1.0), // 绿 — 飞机
-        Body => Color::new(0.8, 0.8, 0.8, 1.0),     // 灰 — 天体
+        Missile => Color::new(1.0, 0.4, 0.3, 1.0),    // 红 — 拦截导弹
+        Icbm => Color::new(1.0, 0.7, 0.2, 1.0),       // 橙 — 弹道目标
+        Aircraft => Color::new(0.4, 1.0, 0.5, 1.0),   // 绿 — 飞机
+        Body => Color::new(0.8, 0.8, 0.8, 1.0),       // 灰 — 天体
     }
 }
 
@@ -1191,32 +1235,65 @@ pub fn draw_entity_hud_panel(rows: &[EntityHudRow], x: f32, y: f32) {
     let s = ui_scale();
     let row_h = 26.0 * s;
     let col_x = [
-        x + 12.0 * s,   // 类型色块 + 名称
-        x + 170.0 * s,  // 高度
-        x + 260.0 * s,  // 速度
-        x + 350.0 * s,  // 状态
+        x + 12.0 * s,  // 类型色块 + 名称
+        x + 170.0 * s, // 高度
+        x + 260.0 * s, // 速度
+        x + 350.0 * s, // 状态
     ];
     let panel_w = 520.0 * s;
     let content_h = row_h * rows.len() as f32 + 34.0 * s;
 
-    draw_rectangle(x - 8.0 * s, y - 28.0 * s, panel_w + 16.0 * s, content_h + 8.0 * s,
-        Color::new(0.05, 0.06, 0.09, 0.85));
-    text("实体遥测 (UNIFIED)", x, y - 8.0 * s, 15.0 * s, Color::new(0.7, 0.8, 1.0, 1.0));
+    draw_rectangle(
+        x - 8.0 * s,
+        y - 28.0 * s,
+        panel_w + 16.0 * s,
+        content_h + 8.0 * s,
+        Color::new(0.05, 0.06, 0.09, 0.85),
+    );
+    text(
+        "实体遥测 (UNIFIED)",
+        x,
+        y - 8.0 * s,
+        15.0 * s,
+        Color::new(0.7, 0.8, 1.0, 1.0),
+    );
 
     let mut cy = y + 12.0 * s;
     for row in rows {
         let c = entity_kind_color(row.kind);
-        let alive_c = if row.alive { c } else { Color::new(0.4, 0.4, 0.4, 1.0) };
+        let alive_c = if row.alive {
+            c
+        } else {
+            Color::new(0.4, 0.4, 0.4, 1.0)
+        };
         // 类型色块
         draw_rectangle(x, cy - 14.0 * s, 10.0 * s, 10.0 * s, alive_c);
         // 名称
         text(&row.name, col_x[0] + 16.0 * s, cy, 14.0 * s, alive_c);
         // 高度
-        text(&format!("{:>7.1} km", row.altitude_km), col_x[1], cy, 14.0 * s, Color::new(0.9, 0.9, 0.9, 1.0));
+        text(
+            format!("{:>7.1} km", row.altitude_km),
+            col_x[1],
+            cy,
+            14.0 * s,
+            Color::new(0.9, 0.9, 0.9, 1.0),
+        );
         // 速度
-        text(&format!("{:>6.0} m/s", row.speed_mps), col_x[2], cy, 14.0 * s, Color::new(0.9, 0.9, 0.9, 1.0));
+        text(
+            format!("{:>6.0} m/s", row.speed_mps),
+            col_x[2],
+            cy,
+            14.0 * s,
+            Color::new(0.9, 0.9, 0.9, 1.0),
+        );
         // 状态
-        text(&row.status, col_x[3], cy, 13.0 * s, Color::new(0.65, 0.75, 0.85, 1.0));
+        text(
+            &row.status,
+            col_x[3],
+            cy,
+            13.0 * s,
+            Color::new(0.65, 0.75, 0.85, 1.0),
+        );
         cy += row_h;
     }
 }
@@ -1230,13 +1307,30 @@ pub fn draw_event_log_panel(events: &[String], x: f32, y: f32) {
     let content_h = row_h * (show.clone().count() as f32) + 30.0 * s;
     let panel_w = 460.0 * s;
 
-    draw_rectangle(x - 8.0 * s, y - 26.0 * s, panel_w + 16.0 * s, content_h + 8.0 * s,
-        Color::new(0.05, 0.06, 0.09, 0.85));
-    text("事件日志 (EVENTS)", x, y - 6.0 * s, 15.0 * s, Color::new(1.0, 0.85, 0.5, 1.0));
+    draw_rectangle(
+        x - 8.0 * s,
+        y - 26.0 * s,
+        panel_w + 16.0 * s,
+        content_h + 8.0 * s,
+        Color::new(0.05, 0.06, 0.09, 0.85),
+    );
+    text(
+        "事件日志 (EVENTS)",
+        x,
+        y - 6.0 * s,
+        15.0 * s,
+        Color::new(1.0, 0.85, 0.5, 1.0),
+    );
 
     let mut cy = y + 10.0 * s;
     for ev in show {
-        text(ev, x + 4.0 * s, cy, 13.0 * s, Color::new(0.8, 0.85, 0.9, 1.0));
+        text(
+            ev,
+            x + 4.0 * s,
+            cy,
+            13.0 * s,
+            Color::new(0.8, 0.85, 0.9, 1.0),
+        );
         cy += row_h;
     }
 }
@@ -1248,7 +1342,18 @@ pub fn draw_world_status_bar(time_s: f64, entity_count: usize, event_count: usiz
         "T+{:>7.1}s   实体 {:>2}   事件 {:>3}",
         time_s, entity_count, event_count
     );
-    draw_rectangle(0.0, 0.0, screen_width(), 30.0 * s,
-        Color::new(0.05, 0.06, 0.09, 0.9));
-    text(&label, 12.0 * s, 20.0 * s, 16.0 * s, Color::new(0.75, 0.9, 1.0, 1.0));
+    draw_rectangle(
+        0.0,
+        0.0,
+        screen_width(),
+        30.0 * s,
+        Color::new(0.05, 0.06, 0.09, 0.9),
+    );
+    text(
+        &label,
+        12.0 * s,
+        20.0 * s,
+        16.0 * s,
+        Color::new(0.75, 0.9, 1.0, 1.0),
+    );
 }

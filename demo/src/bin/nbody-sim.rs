@@ -113,22 +113,40 @@ async fn viz_main(scene_path: String) {
             draw_line(cx - 1.0, cy, cx + 1.0, cy, 2.0, color);
 
             // 名称标签
-            text(&body.name, cx + r_px + 6.0 * s, cy + 6.0 * s, 20.0 * s, color);
+            text(
+                &body.name,
+                cx + r_px + 6.0 * s,
+                cy + 6.0 * s,
+                20.0 * s,
+                color,
+            );
         }
 
         // -----------------------------------------------------------------
         // HUD 文字
         // -----------------------------------------------------------------
-        text(&format!("Scene: {}", config.name), 10.0, 30.0 * s, 28.0 * s, WHITE);
         text(
-            &format!("Time: {:.2e} s", runtime.sys.time),
+            format!("Scene: {}", config.name),
+            10.0,
+            30.0 * s,
+            28.0 * s,
+            WHITE,
+        );
+        text(
+            format!("Time: {:.2e} s", runtime.sys.time),
             10.0,
             58.0 * s,
             24.0 * s,
             LIGHTGRAY,
         );
-        text(&format!("Bodies: {n}"), 10.0, 86.0 * s, 24.0 * s, LIGHTGRAY);
-        text(&format!("dt: {:.1e} s", config.dt), 10.0, 110.0 * s, 24.0 * s, LIGHTGRAY);
+        text(format!("Bodies: {n}"), 10.0, 86.0 * s, 24.0 * s, LIGHTGRAY);
+        text(
+            format!("dt: {:.1e} s", config.dt),
+            10.0,
+            110.0 * s,
+            24.0 * s,
+            LIGHTGRAY,
+        );
         text(
             "Left-drag: Rotate | Scroll: Zoom | ESC: Exit",
             10.0,
@@ -145,7 +163,7 @@ async fn viz_main(scene_path: String) {
             let c = body_color(&body.name);
             draw_rectangle(lx, y - 2.0 * s, 16.0 * s, 16.0 * s, c);
             text(
-                &format!("{}  M={:.2e}kg", body.name, body.mass),
+                format!("{}  M={:.2e}kg", body.name, body.mass),
                 lx + 22.0 * s,
                 y + 12.0 * s,
                 20.0 * s,

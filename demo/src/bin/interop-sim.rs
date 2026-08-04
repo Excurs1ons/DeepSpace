@@ -64,7 +64,12 @@ fn hud_rows(w: &World) -> Vec<demo::render::EntityHudRow> {
 
 /// 收集事件日志（最近 N 条，纯文本）
 fn event_log(w: &World, n: usize) -> Vec<String> {
-    w.events.iter().rev().take(n).map(|e| e.text.clone()).collect()
+    w.events
+        .iter()
+        .rev()
+        .take(n)
+        .map(|e| e.text.clone())
+        .collect()
 }
 
 /// 控制台模式：输出完整拦截时间线
@@ -106,7 +111,10 @@ fn run_headless() {
         update_last_printed_events(w.events.len());
 
         // 命中后继续跑 5 秒展示结局，然后退出
-        if w.events.iter().any(|e| e.kind == deepspace::entity::EventKind::Outcome) {
+        if w.events
+            .iter()
+            .any(|e| e.kind == deepspace::entity::EventKind::Outcome)
+        {
             outcome = true;
             if t > w.time_at_outcome() + 5.0 {
                 break;
@@ -163,7 +171,6 @@ fn main() {
 }
 
 /// 3D 窗口模式：统一 HUD + 场景
-#[cfg(not(feature = "headless-only"))]
 async fn run_3d() {
     use demo::render::*;
     use macroquad::prelude::*;
@@ -175,13 +182,10 @@ async fn run_3d() {
     // 加载字体
     load_custom_font("assets/fonts/JetBrainsMono-Regular.ttf").await;
 
-    let mut cam = OrbitalCamera::new(
-        Vec3::new(0.0, 6_500_000.0, 0.0),
-        200_000.0,
-    );
+    let mut cam = OrbitalCamera::new(Vec3::new(0.0, 6_500_000.0, 0.0), 200_000.0);
 
     loop {
-        let dt = get_frame_time().min(0.05);
+        let _dt = get_frame_time().min(0.05);
         cam.update();
 
         // 推进世界（实时 1x，每帧最多 10 步保证稳定）
