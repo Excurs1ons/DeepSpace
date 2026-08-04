@@ -13,7 +13,8 @@
 //!   （与 PhysX 默认场景一致，多线程场景见文档）
 //!
 //! 完整接入文档见 `docs/ffi-integration.md`（含 C / C++ / Unity C# / UE C++
-//! 绑定示例）。头文件契约见 `include/deepspace.h`。
+//! 绑定示例）。头文件 `include/deepspace.h` 由 cbindgen 在构建时自动生成
+//! （见 `build.rs` / `cbindgen.toml`），无需手改。
 
 use crate::entity::{EntityKind, EventKind, WorldEvent};
 use crate::missile::AamConfig;
@@ -21,8 +22,23 @@ use crate::world::{BallisticConfig, World};
 use crate::Vec3;
 use std::ffi::c_char;
 
-/// FFI 句柄：指向 [`World`] 的不透明指针
-pub type DSWorld = World;
+/// FFI 句柄：指向内部 [`World`] 的不透明指针。
+///
+/// 无 `#[repr(C)]` 且字段私有 → cbindgen 生成 `typedef struct DSWorld DSWorld;`，
+/// C 侧只见不透明句柄，不感知内部 [`World`] 的内存布局。
+pub struct DSWorld {
+    _private: [u8; 0],
+}
+
+/// 从不透明句柄拿内部 `World` 的可变引用（FFI 层内部用，非导出）。
+unsafe fn as_world(world: *mut DSWorld) -> &'static mut World {
+    unsafe { &mut *(world as *mut World) }
+}
+
+/// 从不透明句柄拿内部 `World` 的共享引用（FFI 层内部用，非导出）。
+unsafe fn as_world_ref(world: *mut DSWorld) -> &'static World {
+    unsafe { &*(world as *const World) }
+}
 
 // =====================================================================
 // POD 值类型（#[repr(C)]，跨语言可 memcpy）
@@ -213,7 +229,7 @@ fn read_str<const N: usize>(buf: &[c_char; N]) -> String {
 #[no_mangle]
 pub extern "C" fn ds_world_create() -> *mut DSWorld {
     let w = World::default();
-    Box::into_raw(Box::new(w))
+    Box::into_raw(Box::new(w)) as *mut DSWorld
 }
 
 /// 释放世界
@@ -227,7 +243,7 @@ pub unsafe extern "C" fn ds_world_destroy(world: *mut DSWorld) {
         return;
     }
     unsafe {
-        drop(Box::from_raw(world));
+        drop(Box::from_raw(world as *mut World));
     }
 }
 
@@ -242,7 +258,7 @@ pub unsafe extern "C" fn ds_world_step(world: *mut DSWorld) -> i32 {
         return DS_ERR_NULL;
     }
     unsafe {
-        (*world).step();
+        as_world(world).step();
     }
     DS_OK
 }
@@ -258,7 +274,7 @@ pub unsafe extern "C" fn ds_world_time(world: *mut DSWorld) -> f64 {
         set_last_error("ds_world_time: null world");
         return 0.0;
     }
-    unsafe { (*world).time() }
+    unsafe { as_world_ref(world).time() }
 }
 
 /// 最后一条错误消息（线程局部，UTF-8）
@@ -309,7 +325,7 @@ pub unsafe extern "C" fn ds_world_add_spacecraft(
         cfg.mass,
         (cfg.inertia_xx, cfg.inertia_yy, cfg.inertia_zz),
     );
-    unsafe { (*world).add_spacecraft(craft, &name) as i64 }
+    unsafe { as_world(world).add_spacecraft(craft, &name) as i64 }
 }
 
 /// 添加一颗圆轨道卫星（绕世界原点，给定海拔与倾角）
@@ -330,7 +346,7 @@ pub unsafe extern "C" fn ds_world_add_satellite(
     let name = unsafe { std::ffi::CStr::from_ptr(name) }
         .to_string_lossy()
         .into_owned();
-    unsafe { (*world).add_satellite(&name, altitude_m, inclination_rad) as i64 }
+    unsafe { as_world(world).add_satellite(&name, altitude_m, inclination_rad) as i64 }
 }
 
 /// 添加弹道目标（ICBM / 靶弹），返回实体 id
@@ -357,7 +373,7 @@ pub unsafe extern "C" fn ds_world_add_ballistic(
         thrust_n: cfg.thrust_n,
         thrust_duration_s: cfg.thrust_duration_s,
     };
-    unsafe { (*world).add_ballistic(inner) as i64 }
+    unsafe { as_world(world).add_ballistic(inner) as i64 }
 }
 
 /// 发射一枚拦截导弹拦截指定目标，返回拦截弹实体 id（-1 失败）
@@ -377,7 +393,7 @@ pub unsafe extern "C" fn ds_world_fire_interceptor(
     }
     let config = AamConfig::interceptor();
     unsafe {
-        match (*world).fire_interceptor(config, pos.to_vec3(), vel.to_vec3(), target_id) {
+        match as_world(world).fire_interceptor(config, pos.to_vec3(), vel.to_vec3(), target_id) {
             Some(id) => id as i64,
             None => {
                 set_last_error("ds_world_fire_interceptor: target not found");
@@ -397,7 +413,12 @@ pub unsafe extern "C" fn ds_world_detected_target(world: *mut DSWorld) -> i64 {
         set_last_error("ds_world_detected_target: null world");
         return -1;
     }
-    unsafe { (*world).detected_target().map(|id| id as i64).unwrap_or(-1) }
+    unsafe {
+        as_world_ref(world)
+            .detected_target()
+            .map(|id| id as i64)
+            .unwrap_or(-1)
+    }
 }
 
 /// 实体总数（HUD 遍历用）
@@ -409,7 +430,7 @@ pub unsafe extern "C" fn ds_world_entity_count(world: *mut DSWorld) -> usize {
     if world.is_null() {
         return 0;
     }
-    unsafe { (*world).entities.len() }
+    unsafe { as_world_ref(world).entities.len() }
 }
 
 /// 按索引取实体状态（实体表是有序的，索引 ∈ [0, count)）。
@@ -428,7 +449,7 @@ pub unsafe extern "C" fn ds_world_entity_at(
         set_last_error("ds_world_entity_at: null arg");
         return DS_ERR_NULL;
     }
-    let w = unsafe { &*world };
+    let w = as_world_ref(world);
     let Some(e) = w.entities.get(index) else {
         set_last_error("ds_world_entity_at: index out of range");
         return DS_ERR_NOT_FOUND;
@@ -459,7 +480,7 @@ pub unsafe extern "C" fn ds_world_event_count(world: *mut DSWorld) -> usize {
     if world.is_null() {
         return 0;
     }
-    unsafe { (*world).events.len() }
+    unsafe { as_world_ref(world).events.len() }
 }
 
 /// 轮询最近的事件：把最多 `max_events` 条事件写入 `out`，返回写入条数。
@@ -477,7 +498,7 @@ pub unsafe extern "C" fn ds_world_poll_events(
     if world.is_null() || out.is_null() || max_events == 0 {
         return 0;
     }
-    let w = unsafe { &*world };
+    let w = as_world_ref(world);
     let events: Vec<&WorldEvent> = w.recent_events(max_events);
     let n = events.len().min(max_events);
     for (i, evt) in events.iter().take(n).enumerate() {
@@ -496,14 +517,25 @@ pub unsafe extern "C" fn ds_world_poll_events(
 
 fn evt_kind_to_u32(k: EventKind) -> u32 {
     match k {
-        EventKind::Info => 0,
-        EventKind::Detect => 1,
-        EventKind::Launch => 2,
-        EventKind::Hit => 3,
-        EventKind::Phase => 4,
-        EventKind::Outcome => 5,
+        EventKind::Info => DSEV_INFO,
+        EventKind::Detect => DSEV_DETECT,
+        EventKind::Launch => DSEV_LAUNCH,
+        EventKind::Hit => DSEV_HIT,
+        EventKind::Phase => DSEV_PHASE,
+        EventKind::Outcome => DSEV_OUTCOME,
     }
 }
+
+// =====================================================================
+// 事件类型常量（cbindgen 导出为宏，供外部引擎按语义判断事件 kind）
+// =====================================================================
+
+pub const DSEV_INFO: u32 = 0;
+pub const DSEV_DETECT: u32 = 1;
+pub const DSEV_LAUNCH: u32 = 2;
+pub const DSEV_HIT: u32 = 3;
+pub const DSEV_PHASE: u32 = 4;
+pub const DSEV_OUTCOME: u32 = 5;
 
 // =====================================================================
 // 测试：FFI 层端到端（直接调用 extern "C" 函数）

@@ -24,7 +24,7 @@
 - **旋转参考系** — Coriolis / 离心力 / Euler 加速度，地面速度
 - **坐标参考系图** — `FrameGraph` 层次化参考系，自动单位选择，LCA 跨帧距离
 - **统一模拟世界** — `World` 将 N 体 / 6DOF 航天器 / 弹道目标 / 拦截导弹 / 雷达 / 事件流收敛进同一实体表，拦截闭环开箱即用
-- **C ABI 接入层** — `ffi.rs` 导出稳定 C 接口（`ds_world_*`），可接入 **Unreal / Unity / 自研引擎**，见 `docs/ffi-integration.md` 与 `include/deepspace.h`
+- **C ABI 接入层** — `ffi.rs` 导出稳定 C 接口（`ds_world_*`），可接入 **Unreal / Unity / 自研引擎**，头文件由 cbindgen 自动生成（`include/deepspace.h`），见 `docs/ffi-integration.md`
 
 ### 任务系统 (`simulation.rs`)
 - **数据驱动阶段机** — INI 配置定义阶段转换条件 + 事件 + 命令

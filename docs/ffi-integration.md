@@ -47,16 +47,18 @@ cargo build -p deepspace
 
 # 产物
 #   target/debug/libdeepspace.so      (或 .dylib / .dll)
-#   include/deepspace.h              (C ABI 头文件契约)
+#   include/deepspace.h              (C ABI 头文件契约 — 构建时由 cbindgen 自动生成)
 
 # Android 目标（NDK 交叉编译，供 UE Android / Unity Android 使用）
 cargo ndk -t arm64-v8a -o ../android-libs build -p deepspace --release
 #   产物: ../android-libs/arm64-v8a/libdeepspace.so
 ```
 
-> **注意**：`ffi.rs` 全部函数带 `#[no_mangle]` + `extern "C"`，库内符号
-> 稳定导出，无需额外链接选项（`crate-type` 已在 `Cargo.toml` 配置为
-> `["lib", "cdylib"]` 时自动导出；若需静态链接给 C++，用 `"staticlib"`）。
+> **头文件是自动生成的**：`deepspace/build.rs` 在每次 `cargo build` 时调用
+> cbindgen 从 `src/ffi.rs` 重新生成 `include/deepspace.h`，保证 ABI 契约与
+> Rust 实现**永不漂移**。不要手改 `include/deepspace.h` —— 改 ABI 请改
+> `ffi.rs`（加 `#[no_mangle] extern "C" fn`）后重新构建；生成配置见
+> `deepspace/cbindgen.toml`。
 
 ---
 
@@ -66,7 +68,7 @@ cargo ndk -t arm64-v8a -o ../android-libs build -p deepspace --release
 |------|------|
 | `DSWorld*` | 不透明世界句柄。一次模拟一个世界，由驱动引擎主线程持有并每帧 drive。 |
 | `DSEntityState` | 统一实体快照。飞船/卫星/弹道目标/拦截弹全部在这个表里，**每帧读它渲染**。 |
-| `DSEvent` | 统一事件流。发射/探测/命中/结局，HUD 滚动日志直接轮询。 |
+| `DSEvent` | 统一事件流。发射/探测/命中/结局，HUD 滚动日志直接轮询。事件 `kind` 用宏判断：`DSEV_INFO` / `DSEV_DETECT` / `DSEV_LAUNCH` / `DSEV_HIT` / `DSEV_PHASE` / `DSEV_OUTCOME` |
 | 实体 id | `uint64_t` 稳定句柄，用于发射拦截导弹时指定目标。 |
 | 错误处理 | 函数返回码（0 = `DS_OK`，负值 = 错误），细节见 `ds_last_error_message`。 |
 
@@ -492,6 +494,7 @@ apksigner sign --ks your.keystore ../app_resigned.zip
 
 **Q: 如何扩展 FFI 新增能力？**
 1. 在 `deepspace/src/ffi.rs` 加 `#[no_mangle] pub extern "C" fn`。
-2. 同步更新 `include/deepspace.h`。
+2. 重新 `cargo build` —— `include/deepspace.h` 由 cbindgen **自动**重新生成，
+   无需手改头文件。
 3. 加一个 `#[cfg(test)]` FFI 测试（参考 `ffi_interceptor_closed_loop`）。
 4. 跑 `cargo test --workspace` 全绿后提交。
