@@ -407,6 +407,12 @@ pub struct FlightAssist {
     pub max_torque: f64,
 }
 
+impl Default for FlightAssist {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FlightAssist {
     pub fn new() -> Self {
         FlightAssist {
@@ -543,7 +549,7 @@ pub fn project_orbit(
     } else {
         // 双曲/抛物线 → RK4 数值传播
         let initial = vec![pos.x, pos.y, pos.z, vel.x, vel.y, vel.z];
-        let two_body: Box<dyn Fn(f64, &[f64]) -> Vec<f64>> = Box::new(move |_: f64, s: &[f64]| {
+        let two_body: OrbitOdeFn = Box::new(move |_: f64, s: &[f64]| {
             let rv = Vec3::new(s[0], s[1], s[2]);
             let r2 = rv.length_squared();
             let a = if r2 > 0.0 {
@@ -569,8 +575,11 @@ pub fn project_orbit(
     }
 }
 
+/// 轨道投影用的 ODE 导数函数（状态 = [x,y,z,vx,vy,vz]）
+pub type OrbitOdeFn = Box<dyn Fn(f64, &[f64]) -> Vec<f64>>;
+
 /// RK4 单步（用于 orbit projection）
-fn rk4_step(f: &Box<dyn Fn(f64, &[f64]) -> Vec<f64>>, t: f64, y: &[f64], h: f64) -> Vec<f64> {
+fn rk4_step(f: &OrbitOdeFn, t: f64, y: &[f64], h: f64) -> Vec<f64> {
     let n = y.len();
     let k1 = f(t, y);
     let mut tmp = vec![0.0; n];

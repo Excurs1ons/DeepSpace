@@ -3,8 +3,8 @@
 //! 提供空对空导弹（AAM）、地对空导弹（SAM）的飞行力学、
 //! 制导律（比例导引法PN及其变体）、导引头模型。
 
-use crate::Vec3;
 use crate::aerodynamics::WindField;
+use crate::Vec3;
 
 // =====================================================================
 // 导弹类型
@@ -60,9 +60,9 @@ pub struct AamConfig {
     pub cd0: f64,
     pub cl_alpha: f64,
     // 导引头
-    pub seeker_fov_deg: f64,       // 视场 (度)
-    pub seeker_gimbal_limit_deg: f64, // 最大跟踪角 (度)
-    pub seeker_lock_range_km: f64, // 锁定距离 (km)
+    pub seeker_fov_deg: f64,             // 视场 (度)
+    pub seeker_gimbal_limit_deg: f64,    // 最大跟踪角 (度)
+    pub seeker_lock_range_km: f64,       // 锁定距离 (km)
     pub seeker_tracking_rate_deg_s: f64, // 最大跟踪角速度 (度/s)
     // 飞行限制
     pub max_mach: f64,
@@ -83,22 +83,35 @@ impl AamConfig {
         AamConfig {
             name: "AIM-120C AMRAAM".into(),
             seeker: SeekerType::ActiveRadar,
-            mass_kg: 152.0, length_m: 3.66, diameter_m: 0.178, wing_span_m: 0.526,
-            boost_thrust_n: 15_000.0, boost_duration_s: 3.0,
-            sustain_thrust_n: 3_000.0, sustain_duration_s: 8.0,
-            cd0: 0.15, cl_alpha: 6.0,
-            seeker_fov_deg: 30.0, seeker_gimbal_limit_deg: 60.0,
-            seeker_lock_range_km: 25.0, seeker_tracking_rate_deg_s: 40.0,
-            max_mach: 4.0, max_g_load: 35.0, max_range_km: 105.0,
-            warhead_kg: 22.0, kill_radius_m: 10.0,
-            min_range_m: 3_000.0, nav_constant: 4.0,
+            mass_kg: 152.0,
+            length_m: 3.66,
+            diameter_m: 0.178,
+            wing_span_m: 0.526,
+            boost_thrust_n: 15_000.0,
+            boost_duration_s: 3.0,
+            sustain_thrust_n: 3_000.0,
+            sustain_duration_s: 8.0,
+            cd0: 0.15,
+            cl_alpha: 6.0,
+            seeker_fov_deg: 30.0,
+            seeker_gimbal_limit_deg: 60.0,
+            seeker_lock_range_km: 25.0,
+            seeker_tracking_rate_deg_s: 40.0,
+            max_mach: 4.0,
+            max_g_load: 35.0,
+            max_range_km: 105.0,
+            warhead_kg: 22.0,
+            kill_radius_m: 10.0,
+            min_range_m: 3_000.0,
+            nav_constant: 4.0,
         }
     }
 
     /// AIM-120D AMRAAM — 增程型
     pub fn aim120d() -> Self {
         AamConfig {
-            max_range_km: 160.0, seeker_lock_range_km: 30.0,
+            max_range_km: 160.0,
+            seeker_lock_range_km: 30.0,
             seeker_tracking_rate_deg_s: 45.0,
             ..Self::aim120c()
         }
@@ -109,15 +122,27 @@ impl AamConfig {
         AamConfig {
             name: "AIM-9X Sidewinder".into(),
             seeker: SeekerType::ImagingInfrared,
-            mass_kg: 85.0, length_m: 3.02, diameter_m: 0.127, wing_span_m: 0.279,
-            boost_thrust_n: 12_000.0, boost_duration_s: 2.0,
-            sustain_thrust_n: 2_500.0, sustain_duration_s: 5.0,
-            cd0: 0.12, cl_alpha: 7.0,
-            seeker_fov_deg: 40.0, seeker_gimbal_limit_deg: 90.0,
-            seeker_lock_range_km: 10.0, seeker_tracking_rate_deg_s: 60.0,
-            max_mach: 2.5, max_g_load: 40.0, max_range_km: 35.0,
-            warhead_kg: 9.4, kill_radius_m: 6.0,
-            min_range_m: 500.0, nav_constant: 4.5,
+            mass_kg: 85.0,
+            length_m: 3.02,
+            diameter_m: 0.127,
+            wing_span_m: 0.279,
+            boost_thrust_n: 12_000.0,
+            boost_duration_s: 2.0,
+            sustain_thrust_n: 2_500.0,
+            sustain_duration_s: 5.0,
+            cd0: 0.12,
+            cl_alpha: 7.0,
+            seeker_fov_deg: 40.0,
+            seeker_gimbal_limit_deg: 90.0,
+            seeker_lock_range_km: 10.0,
+            seeker_tracking_rate_deg_s: 60.0,
+            max_mach: 2.5,
+            max_g_load: 40.0,
+            max_range_km: 35.0,
+            warhead_kg: 9.4,
+            kill_radius_m: 6.0,
+            min_range_m: 500.0,
+            nav_constant: 4.5,
         }
     }
 
@@ -126,15 +151,27 @@ impl AamConfig {
         AamConfig {
             name: "PL-15".into(),
             seeker: SeekerType::ActiveRadar,
-            mass_kg: 190.0, length_m: 3.9, diameter_m: 0.203, wing_span_m: 0.6,
-            boost_thrust_n: 18_000.0, boost_duration_s: 3.5,
-            sustain_thrust_n: 4_000.0, sustain_duration_s: 10.0,
-            cd0: 0.14, cl_alpha: 6.5,
-            seeker_fov_deg: 30.0, seeker_gimbal_limit_deg: 60.0,
-            seeker_lock_range_km: 30.0, seeker_tracking_rate_deg_s: 45.0,
-            max_mach: 4.5, max_g_load: 40.0, max_range_km: 150.0,
-            warhead_kg: 25.0, kill_radius_m: 12.0,
-            min_range_m: 3_000.0, nav_constant: 4.0,
+            mass_kg: 190.0,
+            length_m: 3.9,
+            diameter_m: 0.203,
+            wing_span_m: 0.6,
+            boost_thrust_n: 18_000.0,
+            boost_duration_s: 3.5,
+            sustain_thrust_n: 4_000.0,
+            sustain_duration_s: 10.0,
+            cd0: 0.14,
+            cl_alpha: 6.5,
+            seeker_fov_deg: 30.0,
+            seeker_gimbal_limit_deg: 60.0,
+            seeker_lock_range_km: 30.0,
+            seeker_tracking_rate_deg_s: 45.0,
+            max_mach: 4.5,
+            max_g_load: 40.0,
+            max_range_km: 150.0,
+            warhead_kg: 25.0,
+            kill_radius_m: 12.0,
+            min_range_m: 3_000.0,
+            nav_constant: 4.0,
         }
     }
 
@@ -143,15 +180,27 @@ impl AamConfig {
         AamConfig {
             name: "PL-10".into(),
             seeker: SeekerType::ImagingInfrared,
-            mass_kg: 89.0, length_m: 3.0, diameter_m: 0.14, wing_span_m: 0.3,
-            boost_thrust_n: 13_000.0, boost_duration_s: 2.0,
-            sustain_thrust_n: 2_000.0, sustain_duration_s: 5.0,
-            cd0: 0.11, cl_alpha: 7.5,
-            seeker_fov_deg: 45.0, seeker_gimbal_limit_deg: 90.0,
-            seeker_lock_range_km: 12.0, seeker_tracking_rate_deg_s: 70.0,
-            max_mach: 3.0, max_g_load: 45.0, max_range_km: 30.0,
-            warhead_kg: 10.0, kill_radius_m: 7.0,
-            min_range_m: 300.0, nav_constant: 4.5,
+            mass_kg: 89.0,
+            length_m: 3.0,
+            diameter_m: 0.14,
+            wing_span_m: 0.3,
+            boost_thrust_n: 13_000.0,
+            boost_duration_s: 2.0,
+            sustain_thrust_n: 2_000.0,
+            sustain_duration_s: 5.0,
+            cd0: 0.11,
+            cl_alpha: 7.5,
+            seeker_fov_deg: 45.0,
+            seeker_gimbal_limit_deg: 90.0,
+            seeker_lock_range_km: 12.0,
+            seeker_tracking_rate_deg_s: 70.0,
+            max_mach: 3.0,
+            max_g_load: 45.0,
+            max_range_km: 30.0,
+            warhead_kg: 10.0,
+            kill_radius_m: 7.0,
+            min_range_m: 300.0,
+            nav_constant: 4.5,
         }
     }
 
@@ -160,15 +209,27 @@ impl AamConfig {
         AamConfig {
             name: "R-77 Adder".into(),
             seeker: SeekerType::ActiveRadar,
-            mass_kg: 175.0, length_m: 3.6, diameter_m: 0.2, wing_span_m: 0.56,
-            boost_thrust_n: 16_000.0, boost_duration_s: 3.0,
-            sustain_thrust_n: 3_500.0, sustain_duration_s: 9.0,
-            cd0: 0.16, cl_alpha: 5.5,
-            seeker_fov_deg: 30.0, seeker_gimbal_limit_deg: 60.0,
-            seeker_lock_range_km: 20.0, seeker_tracking_rate_deg_s: 35.0,
-            max_mach: 4.0, max_g_load: 30.0, max_range_km: 100.0,
-            warhead_kg: 22.0, kill_radius_m: 10.0,
-            min_range_m: 3_000.0, nav_constant: 4.0,
+            mass_kg: 175.0,
+            length_m: 3.6,
+            diameter_m: 0.2,
+            wing_span_m: 0.56,
+            boost_thrust_n: 16_000.0,
+            boost_duration_s: 3.0,
+            sustain_thrust_n: 3_500.0,
+            sustain_duration_s: 9.0,
+            cd0: 0.16,
+            cl_alpha: 5.5,
+            seeker_fov_deg: 30.0,
+            seeker_gimbal_limit_deg: 60.0,
+            seeker_lock_range_km: 20.0,
+            seeker_tracking_rate_deg_s: 35.0,
+            max_mach: 4.0,
+            max_g_load: 30.0,
+            max_range_km: 100.0,
+            warhead_kg: 22.0,
+            kill_radius_m: 10.0,
+            min_range_m: 3_000.0,
+            nav_constant: 4.0,
         }
     }
 
@@ -177,15 +238,27 @@ impl AamConfig {
         AamConfig {
             name: "R-73 Archer".into(),
             seeker: SeekerType::ImagingInfrared,
-            mass_kg: 105.0, length_m: 2.9, diameter_m: 0.17, wing_span_m: 0.34,
-            boost_thrust_n: 14_000.0, boost_duration_s: 2.5,
-            sustain_thrust_n: 3_000.0, sustain_duration_s: 4.0,
-            cd0: 0.13, cl_alpha: 7.0,
-            seeker_fov_deg: 45.0, seeker_gimbal_limit_deg: 80.0,
-            seeker_lock_range_km: 15.0, seeker_tracking_rate_deg_s: 60.0,
-            max_mach: 2.5, max_g_load: 35.0, max_range_km: 30.0,
-            warhead_kg: 8.0, kill_radius_m: 5.0,
-            min_range_m: 300.0, nav_constant: 4.5,
+            mass_kg: 105.0,
+            length_m: 2.9,
+            diameter_m: 0.17,
+            wing_span_m: 0.34,
+            boost_thrust_n: 14_000.0,
+            boost_duration_s: 2.5,
+            sustain_thrust_n: 3_000.0,
+            sustain_duration_s: 4.0,
+            cd0: 0.13,
+            cl_alpha: 7.0,
+            seeker_fov_deg: 45.0,
+            seeker_gimbal_limit_deg: 80.0,
+            seeker_lock_range_km: 15.0,
+            seeker_tracking_rate_deg_s: 60.0,
+            max_mach: 2.5,
+            max_g_load: 35.0,
+            max_range_km: 30.0,
+            warhead_kg: 8.0,
+            kill_radius_m: 5.0,
+            min_range_m: 300.0,
+            nav_constant: 4.5,
         }
     }
 
@@ -258,14 +331,22 @@ impl MissileState {
     pub fn new(config: AamConfig, pos: Vec3, vel: Vec3, tgt_pos: Vec3, tgt_vel: Vec3) -> Self {
         MissileState {
             phase: MissilePhase::Hanging,
-            position: pos, prev_position: pos, velocity: vel,
-            flight_time_s: 0.0, phase_time: 0.0,
-            current_thrust_n: 0.0, propellant_fraction: 1.0,
-            target_position: tgt_pos, target_velocity: tgt_vel,
+            position: pos,
+            prev_position: pos,
+            velocity: vel,
+            flight_time_s: 0.0,
+            phase_time: 0.0,
+            current_thrust_n: 0.0,
+            propellant_fraction: 1.0,
+            target_position: tgt_pos,
+            target_velocity: tgt_vel,
             target_acceleration: Vec3::zero(),
-            seeker_locked: false, has_pitbull: false,
-            current_g: 0.0, cmd_accel: Vec3::zero(),
-            range_flown_m: 0.0, config,
+            seeker_locked: false,
+            has_pitbull: false,
+            current_g: 0.0,
+            cmd_accel: Vec3::zero(),
+            range_flown_m: 0.0,
+            config,
             gravity: Vec3::zero(),
         }
     }
@@ -316,7 +397,9 @@ impl MissileState {
         // 4. 整合加速度
         let thrust_force = if speed > 1.0 && self.current_thrust_n > 0.0 {
             self.velocity.normalized() * self.current_thrust_n
-        } else { Vec3::zero() };
+        } else {
+            Vec3::zero()
+        };
 
         let total_accel = (thrust_force + drag_vec) / m + guidance_accel + self.gravity;
 
@@ -377,11 +460,13 @@ impl MissileState {
     }
 
     fn update_propulsion(&mut self, dt: f64) {
-        if self.current_thrust_n <= 0.0 { return; }
+        if self.current_thrust_n <= 0.0 {
+            return;
+        }
         let isp = 250.0; // ~250s solid/ramjet
         let mass_flow = self.current_thrust_n / (isp * 9.80665);
-        self.propellant_fraction = (self.propellant_fraction - mass_flow * dt / self.config.mass_kg)
-            .max(0.0);
+        self.propellant_fraction =
+            (self.propellant_fraction - mass_flow * dt / self.config.mass_kg).max(0.0);
     }
 
     /// 增强比例导引法 (APN)：PN + 目标加速度补偿
@@ -390,7 +475,9 @@ impl MissileState {
         let v_rel = self.velocity - self.target_velocity;
         let range = r.length();
 
-        if range < 1.0 { return Vec3::zero(); }
+        if range < 1.0 {
+            return Vec3::zero();
+        }
 
         // LOS 视线方向（从导弹指向目标）
         let los = r / range;
@@ -478,8 +565,10 @@ mod tests {
     fn aam_launch_and_step() {
         let mut ms = MissileState::new(
             AamConfig::aim120c(),
-            Vec3::zero(), Vec3::new(300.0, 0.0, 0.0),
-            Vec3::new(50_000.0, 0.0, 5000.0), Vec3::new(250.0, 0.0, 0.0),
+            Vec3::zero(),
+            Vec3::new(300.0, 0.0, 0.0),
+            Vec3::new(50_000.0, 0.0, 5000.0),
+            Vec3::new(250.0, 0.0, 0.0),
         );
         ms.launch();
         assert_eq!(ms.phase, MissilePhase::Boost);

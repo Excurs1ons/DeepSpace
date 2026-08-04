@@ -78,10 +78,8 @@ impl PhysicsBody {
     }
 
     pub fn set_orientation_from_dir(&mut self, dir: Vec3) {
-        self.orientation = Quaternion::rotation_between(
-            &Vec3::new(0.0, 1.0, 0.0),
-            &dir.normalized(),
-        );
+        self.orientation =
+            Quaternion::rotation_between(&Vec3::new(0.0, 1.0, 0.0), &dir.normalized());
     }
     pub fn get_orientation(&self) -> &Quaternion {
         &self.orientation
@@ -499,6 +497,10 @@ impl OrbitalMechanics {
     /// Lambert 问题（universal variables，Curtis Algorithm 5.2 风格）：
     /// 给定起点 r1、终点 r2 与飞行时间 tof，返回在 r1 处所需的转移速度。
     /// 仅处理短程（Δν ≤ π）转移；几何退化或无解时返回 None。
+    ///
+    /// 迭代中 `!(y > 0)` 做 NaN/非正值守卫（partial_cmp 改写会放行 NaN，
+    /// 物理上必须拦截），故本函数允许 `negated_partial_cmp`。
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn lambert_velocity(r1: Vec3, r2: Vec3, tof: f64, mu: f64) -> Option<Vec3> {
         if tof <= 0.0 || mu <= 0.0 {
             return None;
@@ -524,6 +526,7 @@ impl OrbitalMechanics {
                 return None;
             }
             let y = r1m + r2m + a_const * (z * c3 - 1.0) / c2.sqrt();
+            // NaN 守卫：!(y > 0) 在 y=NaN 时为 true（NaN 比较恒 false 取反）
             if !(y > 0.0) {
                 return None;
             }
@@ -533,10 +536,7 @@ impl OrbitalMechanics {
 
         let mut z: f64 = 0.0;
         let mut converged = false;
-        let mut f_cur = match fz(0.0) {
-            Some(f) => f,
-            None => return None,
-        };
+        let mut f_cur = fz(0.0)?;
         // F 的量级 ≈ √μ·tof，容差必须相对化（f64 无法达到绝对 1e-8）
         let f_tol = 1e-10 * (1.0 + sqrt_mu * tof);
         for _ in 0..80 {
@@ -595,6 +595,7 @@ impl OrbitalMechanics {
             return None;
         }
         let y = r1m + r2m + a_const * (z * c3 - 1.0) / c2.sqrt();
+        // NaN 守卫（同 fz 闭包）
         if !(y > 0.0) {
             return None;
         }
@@ -747,7 +748,7 @@ impl GravitationalSystem {
             let dr = self.bodies[j].position - self.bodies[i].position;
             let r2 = dr.length_squared() + self.softening_squared;
             let inv_r3 = 1.0 / (r2 * r2.sqrt());
-            acc = acc + dr * (crate::G * self.bodies[j].mass * inv_r3);
+            acc += dr * (crate::G * self.bodies[j].mass * inv_r3);
         }
         acc
     }
@@ -778,18 +779,18 @@ impl GravitationalSystem {
         // ½-kick: v += ½·a·dt
         let a = self.accelerations();
         for (i, body) in self.bodies.iter_mut().enumerate() {
-            body.velocity = body.velocity + a[i] * (0.5 * dt);
+            body.velocity += a[i] * (0.5 * dt);
         }
 
         // drift: q += v·dt
         for body in &mut self.bodies {
-            body.position = body.position + body.velocity * dt;
+            body.position += body.velocity * dt;
         }
 
         // ½-kick: v += ½·a(q_new)·dt
         let a_new = self.accelerations();
         for (i, body) in self.bodies.iter_mut().enumerate() {
-            body.velocity = body.velocity + a_new[i] * (0.5 * dt);
+            body.velocity += a_new[i] * (0.5 * dt);
         }
 
         self.time += dt;
@@ -818,18 +819,18 @@ impl GravitationalSystem {
         for &stage in &stages {
             // ½-drift: q += v · (stage·dt/2)
             for body in &mut self.bodies {
-                body.position = body.position + body.velocity * (stage * dt * 0.5);
+                body.position += body.velocity * (stage * dt * 0.5);
             }
 
             // kick: v += a(q) · stage·dt
             let a = self.accelerations();
             for (i, body) in self.bodies.iter_mut().enumerate() {
-                body.velocity = body.velocity + a[i] * (stage * dt);
+                body.velocity += a[i] * (stage * dt);
             }
 
             // ½-drift: q += v · (stage·dt/2)
             for body in &mut self.bodies {
-                body.position = body.position + body.velocity * (stage * dt * 0.5);
+                body.position += body.velocity * (stage * dt * 0.5);
             }
         }
 
@@ -936,7 +937,7 @@ impl GravitationalSystem {
     pub fn total_angular_momentum(&self) -> Vec3 {
         let mut ang = Vec3::zero();
         for b in &self.bodies {
-            ang = ang + b.position.cross(&b.velocity) * b.mass;
+            ang += b.position.cross(&b.velocity) * b.mass;
         }
         ang
     }
@@ -1575,14 +1576,24 @@ mod tests {
         let mu: f64 = 3.986_004_418e14;
         let r1 = Vec3::new(6_676_000.0, 0.0, 0.0);
         let theta = std::f64::consts::PI * 179.0 / 180.0;
-        let r2 = Vec3::new(384_400_000.0 * theta.cos(), 384_400_000.0 * theta.sin(), 0.0);
+        let r2 = Vec3::new(
+            384_400_000.0 * theta.cos(),
+            384_400_000.0 * theta.sin(),
+            0.0,
+        );
         let a: f64 = (6_676_000.0 + 384_400_000.0) / 2.0;
         let tof = std::f64::consts::PI * (a * a * a / mu).sqrt();
         let v_hoh = (mu * (2.0 / 6_676_000.0 - 2.0 / (6_676_000.0 + 384_400_000.0))).sqrt();
 
         let v1 = OrbitalMechanics::lambert_velocity(r1, r2, tof, mu).expect("near-Hohmann solves");
         let rel = (v1.length() - v_hoh).abs() / v_hoh;
-        assert!(rel < 0.02, "|v1|={:.1} vs Hohmann {:.1} (rel {})", v1.length(), v_hoh, rel);
+        assert!(
+            rel < 0.02,
+            "|v1|={:.1} vs Hohmann {:.1} (rel {})",
+            v1.length(),
+            v_hoh,
+            rel
+        );
         // 近圆周起点的转移速度应近似切向
         let tangency = v1.dot(&r1.normalized()).abs() / v1.length();
         assert!(tangency < 0.05, "v1 not tangential: {}", tangency);
@@ -1605,10 +1616,12 @@ mod tests {
             let a = -mu * pos.normalized() / pos.length_squared();
             let k1v = a;
             let k1p = vel;
-            let a2 = -mu * (pos + k1p * dt * 0.5).normalized() / (pos + k1p * dt * 0.5).length_squared();
+            let a2 =
+                -mu * (pos + k1p * dt * 0.5).normalized() / (pos + k1p * dt * 0.5).length_squared();
             let k2v = a2;
             let k2p = vel + k1v * dt * 0.5;
-            let a3 = -mu * (pos + k2p * dt * 0.5).normalized() / (pos + k2p * dt * 0.5).length_squared();
+            let a3 =
+                -mu * (pos + k2p * dt * 0.5).normalized() / (pos + k2p * dt * 0.5).length_squared();
             let k3v = a3;
             let k3p = vel + k2v * dt * 0.5;
             let a4 = -mu * (pos + k3p * dt).normalized() / (pos + k3p * dt).length_squared();

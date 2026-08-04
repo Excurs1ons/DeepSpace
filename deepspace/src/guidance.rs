@@ -130,6 +130,13 @@ pub struct FlightComputer {
     algorithm: Box<dyn GuidanceAlgorithm>,
 }
 
+impl Default for FlightComputer {
+    /// 默认飞控：余弦转弯算法（与 `new()` 一致）
+    fn default() -> Self {
+        FlightComputer::new()
+    }
+}
+
 impl FlightComputer {
     /// 使用默认配置和余弦转弯算法创建飞控
     pub fn new() -> Self {
@@ -196,6 +203,12 @@ impl FlightComputer {
 #[derive(Debug, Clone)]
 pub struct CosineGuidance;
 
+impl Default for CosineGuidance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CosineGuidance {
     pub fn new() -> Self {
         CosineGuidance
@@ -255,6 +268,12 @@ impl GuidanceAlgorithm for CosineGuidance {
 /// 以最小 Δv 将 periapsis 提升到目标值，同时 apoapsis 略微上升。
 #[derive(Debug, Clone)]
 pub struct PEGGuidance;
+
+impl Default for PEGGuidance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl PEGGuidance {
     pub fn new() -> Self {

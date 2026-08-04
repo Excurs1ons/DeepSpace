@@ -31,7 +31,7 @@ impl Default for WindField {
     fn default() -> Self {
         Self {
             surface_speed: 5.0,
-            surface_dir_deg: 270.0,  // 西风
+            surface_dir_deg: 270.0, // 西风
             gradient_speed: 25.0,
             gradient_dir_deg: 270.0, // 高空西风急流
             boundary_layer_m: 600.0,
@@ -53,7 +53,7 @@ impl WindField {
         let h = altitude_m.max(0.0);
 
         // 边界层内用对数律插值，之上用梯度风
-        let (frac, sfc_wt, grad_wt) = if h < self.boundary_layer_m {
+        let (_frac, _sfc_wt, grad_wt) = if h < self.boundary_layer_m {
             let f = (h / self.boundary_layer_m).sqrt().min(1.0);
             (h / self.boundary_layer_m, 1.0 - f, f)
         } else {
@@ -100,10 +100,10 @@ pub fn atmosphere_at(altitude_m: f64) -> AtmoState {
 
 #[derive(Debug, Clone, Copy)]
 pub struct AtmoState {
-    pub rho: f64,   // 密度 kg/m³
-    pub p: f64,     // 压力 Pa
-    pub t: f64,     // 温度 K
-    pub sos: f64,   // 声速 m/s
+    pub rho: f64, // 密度 kg/m³
+    pub p: f64,   // 压力 Pa
+    pub t: f64,   // 温度 K
+    pub sos: f64, // 声速 m/s
 }
 
 fn earth_isa_below_85km(h: f64) -> (f64, f64) {
@@ -149,21 +149,27 @@ fn earth_isa_above_85km(h: f64) -> (f64, f64) {
 /// 飞行状态参数（气动计算输入）
 #[derive(Debug, Clone, Copy)]
 pub struct AeroState {
-    pub alpha: f64,   // 攻角 (rad)
-    pub beta: f64,    // 侧滑角 (rad)
-    pub mach: f64,    // 马赫数
-    pub alt: f64,     // 高度 (m)
-    pub qbar: f64,    // 动压 (Pa)
+    pub alpha: f64, // 攻角 (rad)
+    pub beta: f64,  // 侧滑角 (rad)
+    pub mach: f64,  // 马赫数
+    pub alt: f64,   // 高度 (m)
+    pub qbar: f64,  // 动压 (Pa)
 }
 
 impl AeroState {
     pub fn new(vel_body: Vec3, atmo: &AtmoState) -> Self {
         let speed = vel_body.length().max(1e-6);
         let alpha = (vel_body.z / speed).asin(); // 攻角: local z-up
-        let beta = (vel_body.x / speed).asin();   // 侧滑角
+        let beta = (vel_body.x / speed).asin(); // 侧滑角
         let mach = speed / atmo.sos.max(1.0);
         let qbar = 0.5 * atmo.rho * speed * speed;
-        AeroState { alpha, beta, mach, alt: 0.0, qbar }
+        AeroState {
+            alpha,
+            beta,
+            mach,
+            alt: 0.0,
+            qbar,
+        }
     }
 }
 
@@ -179,11 +185,11 @@ pub struct AeroCoeffs {
     /// 最大升力系数 (失速限制)
     pub cl_max: f64,
     /// 铰链力矩系数
-    pub cm_alpha: f64,  // 纵向静稳导数
-    pub cm_de: f64,     // 升降舵效率 (per rad)
-    pub cn_beta: f64,   // 航向静稳导数
-    pub cl_da: f64,     // 副翼效率 (per rad)
-    pub cn_dr: f64,     // 方向舵效率 (per rad)
+    pub cm_alpha: f64, // 纵向静稳导数
+    pub cm_de: f64,   // 升降舵效率 (per rad)
+    pub cn_beta: f64, // 航向静稳导数
+    pub cl_da: f64,   // 副翼效率 (per rad)
+    pub cn_dr: f64,   // 方向舵效率 (per rad)
     // 阻力板
     pub cd_flap_delta: f64,
 }
@@ -194,12 +200,12 @@ impl AeroCoeffs {
         AeroCoeffs {
             cd0: 0.025,
             k_factor: 0.12,
-            cl_alpha: 5.5,  // per rad (~0.096/deg)
+            cl_alpha: 5.5, // per rad (~0.096/deg)
             cl_max: 1.6,
             cm_alpha: -0.5, // 负值 = 静稳定
             cm_de: -1.2,    // 升降舵下偏 → 抬头
             cn_beta: 0.12,
-            cl_da: 0.15,    // 副翼差动
+            cl_da: 0.15, // 副翼差动
             cn_dr: -0.08,
             cd_flap_delta: 0.02,
         }
@@ -210,10 +216,10 @@ impl AeroCoeffs {
         AeroCoeffs {
             cd0: 0.08,
             k_factor: 0.3,
-            cl_alpha: 8.0,  // 导弹弹体升力效率高（翼面+弹体）
+            cl_alpha: 8.0, // 导弹弹体升力效率高（翼面+弹体）
             cl_max: 2.5,
             cm_alpha: -1.0,
-            cm_de: -2.0,    // 尾舵效率高
+            cm_de: -2.0, // 尾舵效率高
             cn_beta: 0.2,
             cl_da: 0.3,
             cn_dr: -0.15,
@@ -257,17 +263,18 @@ pub fn aero_forces(
     let cl_linear = coeffs.cl_alpha * alpha;
     let cl_stall = stall_correction(cl_linear, coeffs.cl_max);
     // CD = Cd0 + K*CL² + 襟翼/减速板增量
-    let cd = coeffs.cd0 + coeffs.k_factor * cl_stall * cl_stall
-        + if deflections.speedbrake > 0.5 { coeffs.cd_flap_delta } else { 0.0 };
+    let cd = coeffs.cd0
+        + coeffs.k_factor * cl_stall * cl_stall
+        + if deflections.speedbrake > 0.5 {
+            coeffs.cd_flap_delta
+        } else {
+            0.0
+        };
     // 侧力
     let cy = coeffs.cn_beta * beta; // 简化
 
     // 机体坐标: x-阻力, y-侧力, z-升力（负值=向上）
-    Vec3::new(
-        -qs * cd,
-        qs * cy,
-        -qs * cl_stall,
-    )
+    Vec3::new(-qs * cd, qs * cy, -qs * cl_stall)
 }
 
 /// 失速修正：在 CL_max 附近圆滑饱和
@@ -278,8 +285,7 @@ fn stall_correction(cl: f64, cl_max: f64) -> f64 {
     } else if abs_cl <= cl_max {
         cl.signum() * (cl_max * 0.8 + (abs_cl - cl_max * 0.8) * 0.3)
     } else {
-        cl.signum() * (cl_max * 0.8 + (cl_max - cl_max * 0.8) * 0.3
-            + (abs_cl - cl_max) * 0.05)
+        cl.signum() * (cl_max * 0.8 + (cl_max - cl_max * 0.8) * 0.3 + (abs_cl - cl_max) * 0.05)
     }
 }
 
@@ -324,8 +330,11 @@ pub struct ControlDeflections {
 impl ControlDeflections {
     pub fn neutral() -> Self {
         ControlDeflections {
-            elevator: 0.0, aileron: 0.0, rudder: 0.0,
-            speedbrake: 0.0, throttle: 0.0,
+            elevator: 0.0,
+            aileron: 0.0,
+            rudder: 0.0,
+            speedbrake: 0.0,
+            throttle: 0.0,
         }
     }
 }
@@ -335,12 +344,7 @@ impl ControlDeflections {
 // =====================================================================
 
 /// 计算喷气发动机推力（高度/Mach 修正）
-pub fn jet_thrust(
-    sea_level_static_thrust: f64,
-    mach: f64,
-    altitude: f64,
-    throttle: f64,
-) -> f64 {
+pub fn jet_thrust(sea_level_static_thrust: f64, mach: f64, altitude: f64, throttle: f64) -> f64 {
     if throttle <= 0.0 || sea_level_static_thrust <= 0.0 {
         return 0.0;
     }
@@ -348,10 +352,18 @@ pub fn jet_thrust(
     let rho_sl = 1.225;
     let rho = if altitude <= 84_852.0 {
         let (p, t) = earth_isa_below_85km(altitude);
-        if t > 0.0 { p / (287.058 * t) } else { 0.0 }
+        if t > 0.0 {
+            p / (287.058 * t)
+        } else {
+            0.0
+        }
     } else {
         let (p, t) = earth_isa_above_85km(altitude);
-        if t > 0.0 { p / (287.058 * t) } else { 0.0 }
+        if t > 0.0 {
+            p / (287.058 * t)
+        } else {
+            0.0
+        }
     };
     let alt_factor = (rho / rho_sl).max(0.0);
 
@@ -368,12 +380,7 @@ pub fn jet_thrust(
 }
 
 /// 火箭发动机推力（真空 + 高度修正）
-pub fn rocket_thrust(
-    vac_thrust: f64,
-    ambient_pressure: f64,
-    exit_area: f64,
-    throttle: f64,
-) -> f64 {
+pub fn rocket_thrust(vac_thrust: f64, ambient_pressure: f64, exit_area: f64, throttle: f64) -> f64 {
     if throttle <= 0.0 {
         return 0.0;
     }
@@ -408,7 +415,11 @@ mod tests {
     #[test]
     fn aero_forces_zero_alpha() {
         let state = AeroState {
-            alpha: 0.0, beta: 0.0, mach: 0.5, alt: 0.0, qbar: 1000.0,
+            alpha: 0.0,
+            beta: 0.0,
+            mach: 0.5,
+            alt: 0.0,
+            qbar: 1000.0,
         };
         let coeffs = AeroCoeffs::fighter_typical();
         let defs = ControlDeflections::neutral();
@@ -422,7 +433,11 @@ mod tests {
     #[test]
     fn aero_forces_lift_at_alpha() {
         let state = AeroState {
-            alpha: 0.1, beta: 0.0, mach: 0.5, alt: 5000.0, qbar: 2000.0,
+            alpha: 0.1,
+            beta: 0.0,
+            mach: 0.5,
+            alt: 5000.0,
+            qbar: 2000.0,
         };
         let coeffs = AeroCoeffs::fighter_typical();
         let defs = ControlDeflections::neutral();
@@ -434,7 +449,11 @@ mod tests {
     #[test]
     fn aero_moments_pitch_up() {
         let state = AeroState {
-            alpha: 0.05, beta: 0.0, mach: 0.6, alt: 0.0, qbar: 5000.0,
+            alpha: 0.05,
+            beta: 0.0,
+            mach: 0.6,
+            alt: 0.0,
+            qbar: 5000.0,
         };
         let coeffs = AeroCoeffs::fighter_typical();
         let mut defs = ControlDeflections::neutral();

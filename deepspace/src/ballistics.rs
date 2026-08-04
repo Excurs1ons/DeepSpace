@@ -1,11 +1,13 @@
 use crate::Vec3;
 use crate::{EARTH_EQUATORIAL_RADIUS, EARTH_MU, EARTH_OMEGA, EARTH_POLAR_RADIUS};
-use std::f64::consts::PI;
 
 // 地球椭球辅助函数
 struct EarthModel;
 
 impl EarthModel {
+    /// 椭球在给定大地纬度处的曲面半径（地心到椭球面距离）。
+    /// 目前作为 `geo_to_ecef`/`ecef_to_geo` 的椭圆度参考，测试中校验赤道/两极。
+    #[allow(dead_code)]
     fn radius_at_latitude(lat_deg: f64) -> f64 {
         let lat = lat_deg.to_radians();
         let a = EARTH_EQUATORIAL_RADIUS;
@@ -471,12 +473,12 @@ impl IcbmState {
 
     fn current_mass(&self) -> f64 {
         let remaining: f64 = self.propellant_remaining.iter().sum();
-        let structure: f64 = self
+        let _structure: f64 = self
             .config
             .stages
             .iter()
             .map(|s| {
-                if matches!(self.phase, IcbmPhase::Boost(i))
+                if matches!(self.phase, IcbmPhase::Boost(_i))
                     || matches!(self.phase, IcbmPhase::Coast)
                     || matches!(self.phase, IcbmPhase::Midcourse)
                     || matches!(self.phase, IcbmPhase::BusDeployment)
@@ -639,21 +641,18 @@ impl IcbmState {
     }
 
     fn consume_propellant(&mut self, dt: f64) {
-        match self.phase {
-            IcbmPhase::Boost(i) => {
-                if i < self.propellant_remaining.len() {
-                    let stage = &self.config.stages[i];
-                    let isp = if self.position_ecef.length() - EARTH_EQUATORIAL_RADIUS > 30_000.0 {
-                        stage.isp_vac_s
-                    } else {
-                        stage.isp_sl_s.max(260.0)
-                    };
-                    let mass_flow = stage.thrust_vac_n / (isp * 9.80665);
-                    self.propellant_remaining[i] =
-                        (self.propellant_remaining[i] - mass_flow * dt).max(0.0);
-                }
+        if let IcbmPhase::Boost(i) = self.phase {
+            if i < self.propellant_remaining.len() {
+                let stage = &self.config.stages[i];
+                let isp = if self.position_ecef.length() - EARTH_EQUATORIAL_RADIUS > 30_000.0 {
+                    stage.isp_vac_s
+                } else {
+                    stage.isp_sl_s.max(260.0)
+                };
+                let mass_flow = stage.thrust_vac_n / (isp * 9.80665);
+                self.propellant_remaining[i] =
+                    (self.propellant_remaining[i] - mass_flow * dt).max(0.0);
             }
-            _ => {}
         }
     }
 
@@ -692,10 +691,8 @@ impl IcbmState {
             IcbmPhase::BusDeployment => {
                 // 部署弹头：按时间间隔释放
                 for (i, deployed) in self.rv_deployed.iter_mut().enumerate() {
-                    if !*deployed {
-                        if i as f64 * 0.5 < self.stage_time {
-                            *deployed = true;
-                        }
+                    if !*deployed && i as f64 * 0.5 < self.stage_time {
+                        *deployed = true;
                     }
                 }
                 // 所有弹头部署完毕 → 再入

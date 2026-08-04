@@ -19,7 +19,7 @@ use crate::environment::Atmosphere;
 use crate::missile::{AamConfig, MissileState};
 use crate::physics::GravitationalSystem;
 use crate::sensors::{Radar, RadarConfig, RadarMode};
-use crate::space_physics::{SpacecraftBody, SpacePhysicsWorld};
+use crate::space_physics::{SpacePhysicsWorld, SpacecraftBody};
 use crate::{Vec3, G};
 
 /// 简化弹道目标参数（ICBM 目标实体）
@@ -111,11 +111,7 @@ impl World {
         let v = (mu / r).sqrt();
         let pos = Vec3::new(r, 0.0, 0.0);
         // 绕 Z 轴圆轨道，按倾角倾斜
-        let vel = Vec3::new(
-            0.0,
-            v * inclination_rad.cos(),
-            v * inclination_rad.sin(),
-        );
+        let vel = Vec3::new(0.0, v * inclination_rad.cos(), v * inclination_rad.sin());
         let craft = SpacecraftBody::new(pos, vel, 2000.0, (500.0, 500.0, 200.0));
         let id = self.add_spacecraft(craft, name);
         self.events.push(WorldEvent::new(
@@ -245,7 +241,9 @@ impl World {
         // 3. 拦截导弹推进（气动 + ProNav）
         let mut dead = Vec::new();
         // 预取目标状态，避免在可变借用循环内再次借用 self
-        let target_state = self.detected_target().and_then(|tid| self.entity_state(tid));
+        let target_state = self
+            .detected_target()
+            .and_then(|tid| self.entity_state(tid));
         for (i, ms) in self.missiles.iter_mut().enumerate() {
             if !ms.is_alive() {
                 dead.push(i);
@@ -305,10 +303,6 @@ impl World {
         self.check_hits();
     }
 
-    fn missile_entity_id(&self, missile_idx: usize) -> u64 {
-        self.missile_entity_ids.get(missile_idx).copied().unwrap_or(0)
-    }
-
     /// 雷达探测：拦截雷达扫描弹道目标，更新事件
     fn update_radar(&mut self) {
         for (ent, _) in &self.ballistic {
@@ -364,10 +358,7 @@ impl World {
         // 结局判定：存在命中事件且所有目标非存活 → 拦截成功
         if !self.ballistic.is_empty()
             && self.ballistic.iter().all(|(e, _)| !e.alive)
-            && !self
-                .events
-                .iter()
-                .any(|e| e.kind == EventKind::Outcome)
+            && !self.events.iter().any(|e| e.kind == EventKind::Outcome)
         {
             let hit_count = self
                 .events
@@ -379,11 +370,8 @@ impl World {
             } else {
                 format!("MISSION FAIL — 目标坠地未被拦截 (T+{:.1}s)", self.time())
             };
-            self.events.push(WorldEvent::new(
-                self.time(),
-                EventKind::Outcome,
-                text,
-            ));
+            self.events
+                .push(WorldEvent::new(self.time(), EventKind::Outcome, text));
         }
     }
 
@@ -429,11 +417,11 @@ fn step_ballistic(
 
     // 程序推力（前 thrust_duration_s）
     if cfg.thrust_n > 0.0 && time < cfg.thrust_duration_s {
-        a = a + ent.velocity.normalized() * (cfg.thrust_n / cfg.mass);
+        a += ent.velocity.normalized() * (cfg.thrust_n / cfg.mass);
     }
 
-    ent.velocity = ent.velocity + a * dt;
-    ent.position = ent.position + ent.velocity * dt;
+    ent.velocity += a * dt;
+    ent.position += ent.velocity * dt;
     ent.acceleration = a;
 }
 
@@ -478,7 +466,13 @@ mod tests {
             thrust_duration_s: 0.0,
         };
         let id = w.add_ballistic(cfg);
-        assert_eq!(w.entities.iter().filter(|e| e.kind == EntityKind::Icbm).count(), 0);
+        assert_eq!(
+            w.entities
+                .iter()
+                .filter(|e| e.kind == EntityKind::Icbm)
+                .count(),
+            0
+        );
         assert_eq!(w.ballistic.len(), 1);
         assert_eq!(w.ballistic[0].0.id, id);
         assert!(w.ballistic[0].0.alive);
@@ -542,9 +536,7 @@ mod tests {
         }
         assert!(hit, "目标应被拦截");
         assert!(
-            w.events
-                .iter()
-                .any(|e| e.kind == EventKind::Outcome),
+            w.events.iter().any(|e| e.kind == EventKind::Outcome),
             "应有结局事件"
         );
     }

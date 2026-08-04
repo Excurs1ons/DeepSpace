@@ -4,8 +4,8 @@
 //! 结合 aerodynamics 模块的气动力 + 重力 + 推力进行 6DOF 积分。
 
 use crate::aerodynamics::{
-    aero_forces, aero_moments, jet_thrust, AeroCoeffs, AeroState, AtmoState,
-    ControlDeflections, WindField,
+    aero_forces, aero_moments, jet_thrust, AeroCoeffs, AeroState, AtmoState, ControlDeflections,
+    WindField,
 };
 use crate::core::Quaternion;
 use crate::Vec3;
@@ -237,7 +237,13 @@ pub struct AircraftState {
 }
 
 impl AircraftState {
-    pub fn new(config: AircraftConfig, pos: Vec3, vel: Vec3, heading_deg: f64, fuel_kg: f64) -> Self {
+    pub fn new(
+        config: AircraftConfig,
+        pos: Vec3,
+        vel: Vec3,
+        heading_deg: f64,
+        fuel_kg: f64,
+    ) -> Self {
         let fuel = fuel_kg.min(config.max_fuel_kg);
         let mass = config.total_mass(fuel);
         // 按航向初始化姿态（z-up: heading为真北顺时针）
@@ -346,17 +352,20 @@ impl AircraftState {
         }
 
         // 四元数更新
-        let wq = Quaternion::new(0.0,
+        let wq = Quaternion::new(
+            0.0,
             self.angular_velocity.x,
             self.angular_velocity.y,
-            self.angular_velocity.z);
+            self.angular_velocity.z,
+        );
         let dq = wq.mul(&self.orientation);
         self.orientation = Quaternion::new(
             self.orientation.w + 0.5 * dt * dq.w,
             self.orientation.x + 0.5 * dt * dq.x,
             self.orientation.y + 0.5 * dt * dq.y,
             self.orientation.z + 0.5 * dt * dq.z,
-        ).normalized();
+        )
+        .normalized();
 
         // 7. g-load
         let total_accel_mag = accel.length() / 9.80665;
@@ -428,6 +437,12 @@ pub struct Autopilot {
     i_alt: f64,
 }
 
+impl Default for Autopilot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Autopilot {
     pub fn new() -> Self {
         Autopilot {
@@ -459,15 +474,18 @@ impl Autopilot {
         // 航向保持（PID）
         let current_heading = state.orientation.yaw_deg();
         let mut heading_error = self.target_heading_deg - current_heading;
-        if heading_error > 180.0 { heading_error -= 360.0; }
-        if heading_error < -180.0 { heading_error += 360.0; }
+        if heading_error > 180.0 {
+            heading_error -= 360.0;
+        }
+        if heading_error < -180.0 {
+            heading_error += 360.0;
+        }
 
         self.i_heading += heading_error * dt * 0.02;
         self.i_heading = self.i_heading.clamp(-0.5, 0.5);
 
         let d_heading = (heading_error - self.prev_heading_error) / dt.max(0.01);
-        let roll_cmd = (kp_h * heading_error + kd_h * d_heading + self.i_heading)
-            .clamp(-1.0, 1.0);
+        let roll_cmd = (kp_h * heading_error + kd_h * d_heading + self.i_heading).clamp(-1.0, 1.0);
         defs.aileron = roll_cmd * 0.3;
         // 协调转弯：偏航跟随
         defs.rudder = roll_cmd * 0.1;
@@ -479,8 +497,7 @@ impl Autopilot {
         self.i_alt += alt_error * dt * 0.005;
         self.i_alt = self.i_alt.clamp(-0.3, 0.3);
         let d_alt = (alt_error - self.prev_alt_error) / dt.max(0.01);
-        let pitch_cmd = (kp_a * alt_error + kd_a * d_alt + self.i_alt)
-            .clamp(-0.5, 0.5);
+        let pitch_cmd = (kp_a * alt_error + kd_a * d_alt + self.i_alt).clamp(-0.5, 0.5);
         defs.elevator = pitch_cmd;
 
         self.prev_alt_error = alt_error;
@@ -515,7 +532,8 @@ mod tests {
             cfg,
             Vec3::new(0.0, 0.0, 5000.0),
             Vec3::new(250.0, 0.0, 0.0),
-            0.0, 2000.0,
+            0.0,
+            2000.0,
         );
         ac.controls.throttle = 0.5;
 
@@ -538,7 +556,8 @@ mod tests {
             cfg,
             Vec3::zero(),
             Vec3::new(250.0, 0.0, 5000.0),
-            0.0, 2000.0,
+            0.0,
+            2000.0,
         );
 
         let _defs = ap.compute(&ac, 0.05);

@@ -210,9 +210,9 @@ pub const GAMMA_AIR: f64 = 1.4; // 绝热指数比热容比
 // 地球常量 (WGS-84) — 供 ballistics/physics 等模块统一使用
 // =====================================================================
 pub const EARTH_EQUATORIAL_RADIUS: f64 = 6_378_137.0; // m
-pub const EARTH_POLAR_RADIUS: f64 = 6_356_752.0;     // m
+pub const EARTH_POLAR_RADIUS: f64 = 6_356_752.0; // m
 pub const EARTH_FLATTENING: f64 = 1.0 / 298.257223563;
-pub const EARTH_MASS: f64 = 5.9722e24;                // kg
-pub const EARTH_MU: f64 = 3.986_004_418e14;           // m³/s², G × EARTH_MASS
-pub const EARTH_OMEGA: f64 = 7.292_115_9e-5;          // rad/s, 自转角速度
-pub const EARTH_J2: f64 = 1.082_63e-3;                // J2 摄动系数
+pub const EARTH_MASS: f64 = 5.9722e24; // kg
+pub const EARTH_MU: f64 = 3.986_004_418e14; // m³/s², G × EARTH_MASS
+pub const EARTH_OMEGA: f64 = 7.292_115_9e-5; // rad/s, 自转角速度
+pub const EARTH_J2: f64 = 1.082_63e-3; // J2 摄动系数

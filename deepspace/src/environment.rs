@@ -170,6 +170,12 @@ pub struct DamageComponent {
     pub co2_level: f64,
 }
 
+impl Default for DamageComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DamageComponent {
     pub fn new() -> Self {
         Self {
@@ -259,10 +265,13 @@ impl ThermalSimulation {
     /// 更新热通量，使用 Sutton-Graves 驻点加热公式
     pub fn update(&mut self, dt: f64, speed: f64, density: f64, integrity: f64) {
         // Sutton-Graves q = k * sqrt(rho/R_nose) * v^3
-        let q_sg = self.config.sutton_graves_k * (density / self.config.nose_radius_m).sqrt() * speed.powi(3);
+        let q_sg = self.config.sutton_graves_k
+            * (density / self.config.nose_radius_m).sqrt()
+            * speed.powi(3);
 
         // 结合 integrity（TPS 损伤越严重，热流倍数效应越强）
-        let c_h = self.config.convection_coefficient * (1.0 + self.config.damage_heat_multiplier * (1.0 - integrity).max(0.0));
+        let c_h = self.config.convection_coefficient
+            * (1.0 + self.config.damage_heat_multiplier * (1.0 - integrity).max(0.0));
         let q_simple = 0.5 * density * speed.powi(3) * c_h;
 
         self.heat_flux = q_sg.max(q_simple).max(0.0);

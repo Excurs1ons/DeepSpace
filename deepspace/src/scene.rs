@@ -355,7 +355,7 @@ impl SceneRuntime {
 
             // CSV 输出
             if let Some(ref mut file) = csv {
-                if step_count % report_interval_steps == 0 {
+                if step_count.is_multiple_of(report_interval_steps) {
                     self.write_csv_line(file)?;
                     csv_lines += 1;
                 }

@@ -36,8 +36,8 @@ impl LengthUnit {
             LengthUnit::Km => 1_000.0,
             LengthUnit::Au => 149_597_870_700.0,
             LengthUnit::Ly => 9_460_730_472_580_800.0,
-            LengthUnit::Kpc => 3.085_677_581_491_367_2e19,
-            LengthUnit::Mpc => 3.085_677_581_491_367_2e22,
+            LengthUnit::Kpc => 3.085_677_581_491_367e19,
+            LengthUnit::Mpc => 3.085_677_581_491_367e22,
         }
     }
 
@@ -171,6 +171,12 @@ impl Scalar {
 // =====================================================================
 pub struct FrameGraph {
     frames: Vec<FrameNode>,
+}
+
+impl Default for FrameGraph {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FrameGraph {

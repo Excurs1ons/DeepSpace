@@ -135,11 +135,7 @@ impl Quaternion {
 
     /// 从 Yaw-Pitch-Roll 创建（度）
     pub fn from_ypr_deg(yaw: f64, pitch: f64, roll: f64) -> Self {
-        Self::from_euler(
-            pitch.to_radians(),
-            yaw.to_radians(),
-            roll.to_radians(),
-        )
+        Self::from_euler(pitch.to_radians(), yaw.to_radians(), roll.to_radians())
     }
 
     /// 创建将 `from` 旋转到 `to` 的最短弧四元数

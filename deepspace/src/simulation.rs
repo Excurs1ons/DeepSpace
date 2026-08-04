@@ -159,10 +159,10 @@ impl TriggerCondition {
 /// 单个条件向下一阶段的逼近进度
 #[derive(Debug, Clone)]
 pub struct ConditionProgress {
-    pub label: String,   // 短标签 "alt↑", "vel", "T+", "v/v₀", "Q"
-    pub current: f64,    // 当前测量值
-    pub target: f64,     // 目标阈值
-    pub progress: f64,   // 0.0~1.0+ (≥1.0 表示已满足)
+    pub label: String, // 短标签 "alt↑", "vel", "T+", "v/v₀", "Q"
+    pub current: f64,  // 当前测量值
+    pub target: f64,   // 目标阈值
+    pub progress: f64, // 0.0~1.0+ (≥1.0 表示已满足)
     pub is_met: bool,
     pub is_boolean: bool, // 纯布尔条件（MaxQ peak / cutoff fired）
 }
@@ -181,16 +181,32 @@ pub struct NextPhaseInfo {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Command {
-    StageSeparation { stage: i32 },
-    SetThrottle { stage: i32, value: f64 },
-    SetOrientation { orientation: String },
+    StageSeparation {
+        stage: i32,
+    },
+    SetThrottle {
+        stage: i32,
+        value: f64,
+    },
+    SetOrientation {
+        orientation: String,
+    },
     EnableRcs,
-    LogMessage { message: String },
+    LogMessage {
+        message: String,
+    },
     CircularizationBurn,
-    AbortMission { message: String },
+    AbortMission {
+        message: String,
+    },
     /// 施加结构损伤（外部撞击事件 → 注入 vessel.damage_structural）
-    ApplyDamage { amount: f64, message: String },
-    Wait { duration: f64 },
+    ApplyDamage {
+        amount: f64,
+        message: String,
+    },
+    Wait {
+        duration: f64,
+    },
 }
 
 // =====================================================================
@@ -437,6 +453,12 @@ pub struct EventTriggerSystem {
 }
 
 #[allow(dead_code)]
+impl Default for EventTriggerSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventTriggerSystem {
     pub fn new() -> Self {
         EventTriggerSystem {
@@ -537,6 +559,9 @@ impl EventTriggerSystem {
         self.check_triggers(vessel, mission_time, altitude, velocity, max_q, damage)
     }
 
+    /// 遗留条件判定（被 MissionControl::evaluate_condition 取代，仍供旧链路调用）。
+    /// 参数均为独立标量，打包结构体会引入多余类型，故允许 too_many_arguments。
+    #[allow(clippy::too_many_arguments)]
     fn check_condition(
         &self,
         cond: &TriggerCondition,
@@ -560,24 +585,6 @@ impl EventTriggerSystem {
             TriggerType::DamageExceeded => damage >= cond.value,
             _ => false,
         }
-    }
-
-    fn get_event_triggers(&self, event_name: &str) -> Vec<TriggerCondition> {
-        for evt in &self.script.events {
-            if evt.name == event_name {
-                return evt.triggers.clone();
-            }
-        }
-        Vec::new()
-    }
-
-    fn get_event_commands(&self, event_name: &str) -> Vec<Command> {
-        for evt in &self.script.events {
-            if evt.name == event_name {
-                return evt.commands.clone();
-            }
-        }
-        Vec::new()
     }
 
     pub fn get_triggered_events(&self) -> &[MissionEvent] {
@@ -940,6 +947,11 @@ impl Default for WeatherConfig {
 }
 
 impl MissionConfig {
+    /// 解析 INI 风格任务配置。
+    ///
+    /// 引擎节解析采用「Default + 逐字段赋值」模式（配合 if let 可选字段），
+    /// 比巨型结构体字面量更易读，故在此允许 `field_reassign_with_default`。
+    #[allow(clippy::field_reassign_with_default)]
     pub fn load(path: &str) -> Result<Self, String> {
         let content =
             fs::read_to_string(path).map_err(|e| format!("Failed to read config: {}", e))?;
@@ -1516,11 +1528,20 @@ impl MissionConfig {
             if !sec_name.starts_with("body.") {
                 continue;
             }
-            let name = sec_name.strip_prefix("body.").unwrap_or(sec_name).to_string();
+            let name = sec_name
+                .strip_prefix("body.")
+                .unwrap_or(sec_name)
+                .to_string();
             let mass = kv.get("mass").and_then(|v| v.parse().ok()).unwrap_or(0.0);
             let radius = kv.get("radius").and_then(|v| v.parse().ok()).unwrap_or(0.0);
-            let sea_level_pressure = kv.get("seaLevelPressure").and_then(|v| v.parse().ok()).unwrap_or(0.0);
-            let scale_height = kv.get("scaleHeight").and_then(|v| v.parse().ok()).unwrap_or(8_500.0);
+            let sea_level_pressure = kv
+                .get("seaLevelPressure")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0);
+            let scale_height = kv
+                .get("scaleHeight")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8_500.0);
 
             // position: support both semicolon-separated and separate lines
             let parse_vec3 = |px: &str, py: &str, pz: &str| -> Vec3 {
@@ -1656,6 +1677,12 @@ pub struct MissionControl {
     pub tli_best_dv: f64,
     /// 窗口搜索进度上报节流（上次上报时刻）
     pub tli_last_search_report: f64,
+}
+
+impl Default for MissionControl {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MissionControl {
@@ -1830,6 +1857,10 @@ impl MissionControl {
     }
 
     /// 评估单个触发条件（数据驱动版本，使用完整的 MissionControl 上下文）
+    ///
+    /// 进度比例用 `.min().max()` 而非 `.clamp()`（对 NaN 输入归零而非传播），
+    /// 故本函数允许 `manual_clamp`。
+    #[allow(clippy::manual_clamp)]
     fn evaluate_condition(
         &self,
         cond: &TriggerCondition,
@@ -1901,7 +1932,10 @@ impl MissionControl {
         earth: &Planet,
         moon_pos: Vec3,
     ) -> Option<NextPhaseInfo> {
-        let transition = self.script.phase_transitions.iter()
+        let transition = self
+            .script
+            .phase_transitions
+            .iter()
             .find(|t| t.from == self.phase_name)?;
         self.compute_next_phase_info_for_transition(transition, vessel, earth, moon_pos)
     }
@@ -1918,11 +1952,16 @@ impl MissionControl {
         // 最多追踪 10 个后续阶段，防止无限循环
         for _ in 0..10 {
             let next = current.clone();
-            let transition = self.script.phase_transitions.iter()
+            let transition = self
+                .script
+                .phase_transitions
+                .iter()
                 .find(|t| t.from == next);
             match transition {
                 Some(t) => {
-                    if let Some(info) = self.compute_next_phase_info_for_transition(t, vessel, earth, moon_pos) {
+                    if let Some(info) =
+                        self.compute_next_phase_info_for_transition(t, vessel, earth, moon_pos)
+                    {
                         current = info.next_phase.clone();
                         result.push(info);
                     } else {
@@ -1936,6 +1975,9 @@ impl MissionControl {
     }
 
     /// 为指定 Transition 计算进度（内部复用 compute_next_phase_info 的逻辑）
+    ///
+    /// 进度比例用 `.min().max()` 而非 `.clamp()`（对 NaN 输入归零而非传播）。
+    #[allow(clippy::manual_clamp)]
     fn compute_next_phase_info_for_transition(
         &self,
         transition: &PhaseTransition,
@@ -1958,18 +2000,12 @@ impl MissionControl {
 
         for cond in &transition.conditions {
             let (label, current, target, is_boolean) = match cond.trigger_type {
-                TriggerType::TimeElapsed =>
-                    ("T+", self.mission_time, cond.value, false),
-                TriggerType::AltitudeAbove =>
-                    ("alt↑", altitude, cond.value, false),
-                TriggerType::AltitudeBelow =>
-                    ("alt↓", altitude, cond.value, false),
-                TriggerType::VelocityAbove =>
-                    ("vel", velocity, cond.value, false),
-                TriggerType::VelocityBelow =>
-                    ("vel↓", velocity, cond.value, false),
-                TriggerType::DistanceToMoonBelow =>
-                    ("moon↓", moon_dist, cond.value, false),
+                TriggerType::TimeElapsed => ("T+", self.mission_time, cond.value, false),
+                TriggerType::AltitudeAbove => ("alt↑", altitude, cond.value, false),
+                TriggerType::AltitudeBelow => ("alt↓", altitude, cond.value, false),
+                TriggerType::VelocityAbove => ("vel", velocity, cond.value, false),
+                TriggerType::VelocityBelow => ("vel↓", velocity, cond.value, false),
+                TriggerType::DistanceToMoonBelow => ("moon↓", moon_dist, cond.value, false),
                 TriggerType::VelocityRatioAbove => {
                     let cur = velocity / v_orbital;
                     ("v/v₀", cur, cond.value, false)
@@ -1978,26 +2014,51 @@ impl MissionControl {
                     let cur = velocity / v_orbital;
                     ("v/v₀↓", cur, cond.value, false)
                 }
-                TriggerType::TimeSincePhaseAbove =>
-                    ("Δt", self.mission_time - self.phase_entry_time, cond.value, false),
-                TriggerType::DynamicPressureAbove =>
-                    ("Q", self.telemetry.dynamic_pressure_pa, cond.value, false),
-                TriggerType::MaxqPassed =>
-                    ("MaxQ", if self.max_q_passed { 1.0 } else { 0.0 }, 1.0, true),
-                TriggerType::EngineCutoff =>
-                    ("cutoff", if self.cutoff_fired { 1.0 } else { 0.0 }, 1.0, true),
-                TriggerType::FlagIsTrue =>
-                    (cond.parameter.as_str(), if self.flags.get(&cond.parameter).copied().unwrap_or(false) { 1.0 } else { 0.0 }, 1.0, true),
+                TriggerType::TimeSincePhaseAbove => (
+                    "Δt",
+                    self.mission_time - self.phase_entry_time,
+                    cond.value,
+                    false,
+                ),
+                TriggerType::DynamicPressureAbove => {
+                    ("Q", self.telemetry.dynamic_pressure_pa, cond.value, false)
+                }
+                TriggerType::MaxqPassed => {
+                    ("MaxQ", if self.max_q_passed { 1.0 } else { 0.0 }, 1.0, true)
+                }
+                TriggerType::EngineCutoff => (
+                    "cutoff",
+                    if self.cutoff_fired { 1.0 } else { 0.0 },
+                    1.0,
+                    true,
+                ),
+                TriggerType::FlagIsTrue => (
+                    cond.parameter.as_str(),
+                    if self.flags.get(&cond.parameter).copied().unwrap_or(false) {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                    1.0,
+                    true,
+                ),
                 TriggerType::FlagIsFalse => {
                     let met = !self.flags.get(&cond.parameter).copied().unwrap_or(true);
-                    (cond.parameter.as_str(), if met { 1.0 } else { 0.0 }, 1.0, true)
+                    (
+                        cond.parameter.as_str(),
+                        if met { 1.0 } else { 0.0 },
+                        1.0,
+                        true,
+                    )
                 }
                 TriggerType::OrbitCircularized => {
                     let met = if oe.semi_major_axis > 0.0 && oe.eccentricity < 1.0 {
                         let diff = oe.semi_major_axis * (1.0 + oe.eccentricity)
                             - oe.semi_major_axis * (1.0 - oe.eccentricity);
                         diff < cond.value
-                    } else { false };
+                    } else {
+                        false
+                    };
                     ("circ", if met { 1.0 } else { 0.0 }, 1.0, true)
                 }
                 TriggerType::ApoapsisAbove => {
@@ -2020,51 +2081,84 @@ impl MissionControl {
             // reentry/success 的“幽灵进度”（例如 vel↓ 20 显示 90%）。
             let use_entry = transition.from == self.phase_name;
             let entry = match (use_entry, cond.trigger_type) {
-                (true, TriggerType::AltitudeAbove | TriggerType::AltitudeBelow) =>
-                    Some(self.phase_entry_altitude),
-                (true, TriggerType::VelocityAbove | TriggerType::VelocityBelow) =>
-                    Some(self.phase_entry_velocity),
+                (true, TriggerType::AltitudeAbove | TriggerType::AltitudeBelow) => {
+                    Some(self.phase_entry_altitude)
+                }
+                (true, TriggerType::VelocityAbove | TriggerType::VelocityBelow) => {
+                    Some(self.phase_entry_velocity)
+                }
                 (true, TriggerType::VelocityRatioAbove | TriggerType::VelocityRatioBelow) => {
-                    let v_orb_entry =
-                        (grav_const * earth_mass / (earth_radius + self.phase_entry_altitude)).sqrt();
-                    Some(if v_orb_entry > 0.0 { self.phase_entry_velocity / v_orb_entry } else { 0.0 })
+                    let v_orb_entry = (grav_const * earth_mass
+                        / (earth_radius + self.phase_entry_altitude))
+                        .sqrt();
+                    Some(if v_orb_entry > 0.0 {
+                        self.phase_entry_velocity / v_orb_entry
+                    } else {
+                        0.0
+                    })
                 }
                 _ => None,
             };
 
             let progress = if is_boolean {
-                if current >= 0.5 { 1.0 } else { 0.0 }
+                if current >= 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
             } else if let Some(entry) = entry {
                 // 当前阶段 → 下一阶段：以本阶段入口状态为基准归一化
-                let above = matches!(cond.trigger_type,
-                    TriggerType::AltitudeAbove | TriggerType::VelocityAbove
-                    | TriggerType::VelocityRatioAbove);
+                let above = matches!(
+                    cond.trigger_type,
+                    TriggerType::AltitudeAbove
+                        | TriggerType::VelocityAbove
+                        | TriggerType::VelocityRatioAbove
+                );
                 if above {
-                    if current >= target_safe { 1.0 }
-                    else if current <= entry { 0.0 }
-                    else { ((current - entry) / (target_safe - entry)).min(1.0).max(0.0) }
-                } else if current <= target_safe { 1.0 }
-                else if current >= entry { 0.0 }
-                else { ((entry - current) / (entry - target_safe)).min(1.0).max(0.0) }
+                    if current >= target_safe {
+                        1.0
+                    } else if current <= entry {
+                        0.0
+                    } else {
+                        ((current - entry) / (target_safe - entry))
+                            .min(1.0)
+                            .max(0.0)
+                    }
+                } else if current <= target_safe {
+                    1.0
+                } else if current >= entry {
+                    0.0
+                } else {
+                    ((entry - current) / (entry - target_safe))
+                        .min(1.0)
+                        .max(0.0)
+                }
             } else {
                 // 下游未到达阶段：Above 用 current/target，Below 反向用 target/current，
                 // 未接近目标时进度≈0，不会提前“涨进度”
-                let below = matches!(cond.trigger_type,
-                    TriggerType::AltitudeBelow | TriggerType::VelocityBelow
-                    | TriggerType::VelocityRatioBelow | TriggerType::DistanceToMoonBelow);
+                let below = matches!(
+                    cond.trigger_type,
+                    TriggerType::AltitudeBelow
+                        | TriggerType::VelocityBelow
+                        | TriggerType::VelocityRatioBelow
+                        | TriggerType::DistanceToMoonBelow
+                );
                 if below {
-                    if current <= target_safe { 1.0 }
-                    else { (target_safe / current).min(1.0) }
+                    if current <= target_safe {
+                        1.0
+                    } else {
+                        (target_safe / current).min(1.0)
+                    }
                 } else {
                     (current / target_safe).min(1.0).max(0.0)
                 }
             };
 
             let is_met = match cond.trigger_type {
-                TriggerType::AltitudeBelow | TriggerType::VelocityBelow
-                | TriggerType::VelocityRatioBelow | TriggerType::DistanceToMoonBelow => {
-                    current <= target_safe
-                }
+                TriggerType::AltitudeBelow
+                | TriggerType::VelocityBelow
+                | TriggerType::VelocityRatioBelow
+                | TriggerType::DistanceToMoonBelow => current <= target_safe,
                 _ => current >= target_safe,
             };
 
@@ -2251,23 +2345,20 @@ impl MissionControl {
                 // TLI 燃烧中 — 保持油门；朝向由 app 层按 tli_target_dir 覆盖
                 vessel.set_stage_throttle(vessel.current_stage, 1.0);
                 let burn_duration = self.mission_time - self.tli_ignition_time;
-                let mut done = false;
-
-                if self.tli_has_target {
-                    // 拦截解：沿目标方向速度达标即完成
-                    let v_along = vel.dot(&self.tli_target_dir);
-                    done = v_along >= self.tli_target_speed || burn_duration > 2500.0;
-                } else {
-                    // 兜底：远地点抬升至月球距离
-                    let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
-                    let apoapsis_alt =
-                        oe.semi_major_axis * (1.0 + oe.eccentricity) - earth.get_radius();
-                    done = apoapsis_alt > 400_000_000.0 || burn_duration > 2200.0;
-                }
                 // 推进剂耗尽（发动机自动熄火）也结束燃烧
-                if self.last_engine_status.total_thrust < 1.0 && burn_duration > 5.0 {
-                    done = true;
-                }
+                let fuel_out = self.last_engine_status.total_thrust < 1.0 && burn_duration > 5.0;
+                let done = fuel_out
+                    || if self.tli_has_target {
+                        // 拦截解：沿目标方向速度达标即完成
+                        let v_along = vel.dot(&self.tli_target_dir);
+                        v_along >= self.tli_target_speed || burn_duration > 2500.0
+                    } else {
+                        // 兜底：远地点抬升至月球距离
+                        let oe = OrbitalMechanics::calculate_elements(pos, vel, earth);
+                        let apoapsis_alt =
+                            oe.semi_major_axis * (1.0 + oe.eccentricity) - earth.get_radius();
+                        apoapsis_alt > 400_000_000.0 || burn_duration > 2200.0
+                    };
 
                 if done {
                     let stage = vessel.current_stage;
@@ -2468,26 +2559,28 @@ impl MissionControl {
         let density = earth.get_atmosphere().get_density(altitude);
         let speed_of_sound = earth.get_atmosphere().get_speed_of_sound(altitude);
 
-        let mut data = TelemetryData::default();
-        data.mission_time = self.mission_time;
-        data.phase = self.current_phase;
-        data.altitude_m = altitude;
-        data.velocity_mps = velocity;
-        data.mach = if speed_of_sound > 0.0 {
-            velocity / speed_of_sound
-        } else {
-            0.0
+        let mut data = TelemetryData {
+            mission_time: self.mission_time,
+            phase: self.current_phase,
+            altitude_m: altitude,
+            velocity_mps: velocity,
+            mach: if speed_of_sound > 0.0 {
+                velocity / speed_of_sound
+            } else {
+                0.0
+            },
+            dynamic_pressure_pa: 0.5 * density * velocity * velocity,
+            total_mass_kg: vessel.body.get_mass(),
+            damage_total: vessel.get_total_damage(),
+            thrust_n: self.last_engine_status.total_thrust,
+            throttle_pct: self.last_engine_status.max_throttle * 100.0,
+            mass_flow_kg_s: self.last_engine_status.total_mass_flow,
+            fuel_flow_kg_s: self.last_engine_status.total_fuel_flow,
+            ox_flow_kg_s: self.last_engine_status.total_ox_flow,
+            position: *pos,
+            velocity: *vel,
+            ..Default::default()
         };
-        data.dynamic_pressure_pa = 0.5 * density * velocity * velocity;
-        data.total_mass_kg = vessel.body.get_mass();
-        data.damage_total = vessel.get_total_damage();
-        data.thrust_n = self.last_engine_status.total_thrust;
-        data.throttle_pct = self.last_engine_status.max_throttle * 100.0;
-        data.mass_flow_kg_s = self.last_engine_status.total_mass_flow;
-        data.fuel_flow_kg_s = self.last_engine_status.total_fuel_flow;
-        data.ox_flow_kg_s = self.last_engine_status.total_ox_flow;
-        data.position = *pos;
-        data.velocity = *vel;
 
         if data.dynamic_pressure_pa > self.max_q {
             self.max_q = data.dynamic_pressure_pa;
@@ -2726,6 +2819,9 @@ impl DeepSpaceMissionPlanner {
     }
 
     /// LOI: 月球轨道插入
+    ///
+    /// `!(dv > 0)` 做 NaN/非正值守卫（partial_cmp 改写会放行 NaN）。
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn plan_lunar_orbit_insertion(&self, v_arrival: Vec3, v_target: Vec3) -> MissionStepResult {
         let dv = (v_arrival - v_target).length();
         if !(dv > 0.0) {

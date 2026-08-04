@@ -2,6 +2,7 @@
 
 use crate::physics::PhysicsBody;
 use crate::Vec3;
+use std::f64::consts::FRAC_1_SQRT_2;
 
 // =====================================================================
 // 推进剂类型
@@ -53,6 +54,8 @@ pub struct Part {
 }
 
 impl Part {
+    /// 8 个参数均为独立的物理/推进剂属性，打包结构体会引入多余类型。
+    #[allow(clippy::too_many_arguments)]
     pub fn new_engine(
         name: &str,
         dry_mass: f64,
@@ -173,6 +176,8 @@ pub struct EnginePart {
 }
 
 impl EnginePart {
+    /// max/min 链对 NaN 输入归零（clamp 会传播 NaN），保留安全语义
+    #[allow(clippy::manual_clamp)]
     pub fn set_throttle(&mut self, t: f64) {
         self.throttle = t.max(0.0).min(1.0);
     }
@@ -193,6 +198,9 @@ impl EnginePart {
         }
     }
 
+    /// 按环境压强线性插值比冲（0~1 归一化）。
+    /// max/min 链对 NaN 安全归零；clamp 会传播 NaN
+    #[allow(clippy::manual_clamp)]
     pub fn current_isp(&self, ambient_pressure: f64) -> f64 {
         let p_sl = 101325.0;
         let t = (ambient_pressure / p_sl).max(0.0).min(1.0);
@@ -292,14 +300,14 @@ impl Rcs {
         let orientation = body.get_orientation_vec3();
         let mut world_force = Vec3::zero();
         if local_dir.y > 0.0 {
-            world_force = world_force + orientation * self.power;
+            world_force += orientation * self.power;
         }
         if local_dir.y < 0.0 {
             world_force = world_force - orientation * self.power;
         }
         let right = Vec3::new(-orientation.y, orientation.x, 0.0);
         if local_dir.x > 0.0 {
-            world_force = world_force + right * self.power;
+            world_force += right * self.power;
         }
         if local_dir.x < 0.0 {
             world_force = world_force - right * self.power;
@@ -337,6 +345,12 @@ pub struct EngineStatus {
 pub struct StagingSystem {
     stages: Vec<Vec<usize>>, // stage index → part indices
     current_stage: i32,
+}
+
+impl Default for StagingSystem {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StagingSystem {
@@ -693,7 +707,7 @@ impl Vessel {
                 if e.throttle > 0.0 {
                     let thrust = e.get_thrust(ambient_pressure);
                     let orientation = self.body.get_orientation_vec3();
-                    total_thrust = total_thrust + orientation * thrust;
+                    total_thrust += orientation * thrust;
                     status.total_thrust += thrust;
                     status.active_engines += 1;
                     status.max_throttle = status.max_throttle.max(e.throttle);
@@ -827,6 +841,12 @@ pub struct EnduranceStation {
     pub is_docking_in_progress: bool,
 }
 
+impl Default for EnduranceStation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EnduranceStation {
     pub const RADIUS: f64 = 40.0;
     pub const NORMAL_RPM: f64 = 5.6;
@@ -867,22 +887,22 @@ impl EnduranceStation {
             (StationModuleId::Cargo, Vec3::new(0.0, 0.0, 5.0), 200.0),
             (
                 StationModuleId::Airlock1,
-                Vec3::new(r * 0.7071, r * 0.7071, 0.0),
+                Vec3::new(r * FRAC_1_SQRT_2, r * FRAC_1_SQRT_2, 0.0),
                 10.0,
             ),
             (
                 StationModuleId::Airlock2,
-                Vec3::new(-r * 0.7071, r * 0.7071, 0.0),
+                Vec3::new(-r * FRAC_1_SQRT_2, r * FRAC_1_SQRT_2, 0.0),
                 10.0,
             ),
             (
                 StationModuleId::Airlock3,
-                Vec3::new(-r * 0.7071, -r * 0.7071, 0.0),
+                Vec3::new(-r * FRAC_1_SQRT_2, -r * FRAC_1_SQRT_2, 0.0),
                 10.0,
             ),
             (
                 StationModuleId::Airlock4,
-                Vec3::new(r * 0.7071, -r * 0.7071, 0.0),
+                Vec3::new(r * FRAC_1_SQRT_2, -r * FRAC_1_SQRT_2, 0.0),
                 10.0,
             ),
         ];
@@ -1444,7 +1464,10 @@ mod tests {
         assert!(s > 0.3, "struct >30% after 50s TPS fail: got {:.4}", s);
         assert!(s <= 1.0);
         // 实际结构失效阈值在配置中定义（默认 0.6）——验证物理模型正确累积
-        assert!(s < 0.8, "struct should not reach 80% in this time: got {s:.4}");
+        assert!(
+            s < 0.8,
+            "struct should not reach 80% in this time: got {s:.4}"
+        );
     }
 
     #[test]
@@ -1452,7 +1475,8 @@ mod tests {
         // 验证长时间结构损伤累积可超过 0.6 阈值
         let mut v = Vessel::new("Test-Struct");
         v.set_damage_tps(0.9);
-        for _ in 0..3000 {  // 3000 步 × 0.1s = 300s
+        for _ in 0..3000 {
+            // 3000 步 × 0.1s = 300s
             if v.get_damage_tps() > 0.8 && v.get_damage_structural() < 1.0 {
                 let sr = v.get_damage_tps() * 0.01 * 0.1;
                 v.set_damage_structural(v.get_damage_structural() + sr);
