@@ -6,12 +6,21 @@ fn main() {
         name: "TGT-3".into(),
         position: Vec3::new(0.0, 6_771_000.0, 0.0), // 静止 400km 高空
         velocity: Vec3::zero(),
-        mass: 1000.0, ref_area_m2: 0.5, cd: 0.2, thrust_n: 0.0, thrust_duration_s: 0.0,
+        mass: 1000.0,
+        ref_area_m2: 0.5,
+        cd: 0.2,
+        thrust_n: 0.0,
+        thrust_duration_s: 0.0,
     };
     let tid = w.add_ballistic(cfg);
     let start = Vec3::new(0.0, 6_446_000.0, 0.0); // 75km 高，目标下方
     let vel = Vec3::new(0.0, 2500.0, 0.0);
-    w.fire_interceptor(deepspace::missile::AamConfig::interceptor(), start, vel, tid);
+    w.fire_interceptor(
+        deepspace::missile::AamConfig::interceptor(),
+        start,
+        vel,
+        tid,
+    );
 
     let mut min_d = f64::MAX;
     for i in 0..4000 {
@@ -25,9 +34,17 @@ fn main() {
                 w.time(), min_d, ms.position.y, tgt.y, ms.velocity.length(), ms.cmd_accel.length()/9.80665,
                 ms.check_hit(&tgt), w.ballistic[0].0.alive);
         }
-        if !w.ballistic[0].0.alive { println!("TARGET DEAD at t={:.1}s", w.time()); break; }
-        if w.time() > 200.0 { break; }
+        if !w.ballistic[0].0.alive {
+            println!("TARGET DEAD at t={:.1}s", w.time());
+            break;
+        }
+        if w.time() > 200.0 {
+            break;
+        }
     }
-    println!("FINAL min_d={:.0}m, events={:?}", min_d,
-        w.events.iter().map(|e| e.text.clone()).collect::<Vec<_>>());
+    println!(
+        "FINAL min_d={:.0}m, events={:?}",
+        min_d,
+        w.events.iter().map(|e| e.text.clone()).collect::<Vec<_>>()
+    );
 }
