@@ -807,6 +807,35 @@ pub fn draw_circle_3d(center: Vec3, radius: f32, segments: u32, color: Color) {
     }
 }
 
+/// 在 3D 空间画任意倾斜的圆环（法线 = `axis`，不要求单位化）
+///
+/// 用于太阳系行星轨道环：轨道平面法线取 `position × velocity`，
+/// 每颗行星以自己的轨道平面呈现（NASA Eyes 风格）。
+pub fn draw_orbit_ring_3d(center: Vec3, radius: f32, axis: Vec3, segments: u32, color: Color) {
+    let n = if axis.length_squared() > 1.0e-9 {
+        axis.normalize()
+    } else {
+        Vec3::Y
+    };
+    // 正交基：选一个与 n 不平行的参考轴构建 (u, v)
+    let ref_vec = if n.dot(Vec3::Y).abs() > 0.9 {
+        Vec3::X
+    } else {
+        Vec3::Y
+    };
+    let u = ref_vec.cross(n).normalize();
+    let v = n.cross(u).normalize();
+
+    let step = std::f32::consts::TAU / segments.max(8) as f32;
+    for i in 0..segments {
+        let a0 = i as f32 * step;
+        let a1 = (i + 1) as f32 * step;
+        let p0 = center + u * (a0.cos() * radius) + v * (a0.sin() * radius);
+        let p1 = center + u * (a1.cos() * radius) + v * (a1.sin() * radius);
+        draw_line_3d(p0, p1, color);
+    }
+}
+
 /// 在 3D 空间中画 2D 垂直圆环（YZ 平面，子午线）
 pub fn draw_meridian_3d(center: Vec3, radius: f32, segments: u32, color: Color) {
     let step = std::f32::consts::TAU / segments as f32;
@@ -1529,7 +1558,7 @@ pub fn draw_orbit_ring_2d(
 }
 
 /// 线性插值颜色
-fn lerp_color(a: Color, b: Color, t: f32) -> Color {
+pub fn lerp_color(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
     Color::new(
         a.r + (b.r - a.r) * t,

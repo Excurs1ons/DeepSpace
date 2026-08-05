@@ -60,9 +60,9 @@ async fn viz_main(scene_path: String) {
                 .sqrt()
         })
         .fold(1.0e10_f64, f64::max);
-    let mut camera = OrbitalCamera::new(Vec3::ZERO, (max_dist * 2.5) as f32);
-    camera.max_distance = (max_dist * 50.0) as f32;
-    camera.min_distance = (max_dist * 0.01) as f32;
+    let mut cam = OrbitalCamera::new(Vec3::ZERO, (max_dist * 2.5) as f32);
+    cam.max_distance = (max_dist * 50.0) as f32;
+    cam.min_distance = (max_dist * 0.01) as f32;
 
     // NASA Eyes 风格：星空 + 时间控制条 + 点击选中
     let stars = StarField::new(600, 0x5EED);
@@ -71,7 +71,7 @@ async fn viz_main(scene_path: String) {
     let mut selected: Option<usize> = None;
 
     loop {
-        camera.update();
+        cam.update();
         if is_key_down(KeyCode::Escape) {
             break;
         }
@@ -98,7 +98,7 @@ async fn viz_main(scene_path: String) {
             let (mx, my) = mouse_position();
             let mut best: Option<(usize, f32)> = None;
             for (i, body) in runtime.sys.bodies.iter().enumerate() {
-                let (cx, cy) = camera.project_2d(to_mvec3(body.position), sw, sh);
+                let (cx, cy) = cam.project_2d(to_mvec3(body.position), sw, sh);
                 let d = (mx - cx) * (mx - cx) + (my - cy) * (my - cy);
                 if d < 40.0 * 40.0 && best.is_none_or(|(_, bd)| d < bd) {
                     best = Some((i, d));
@@ -107,59 +107,77 @@ async fn viz_main(scene_path: String) {
             selected = best.map(|(i, _)| i);
         }
 
-        // 跟随选中天体（相机 target 平滑趋近）
+        // 跟随选中天体（相机 target 平滑趋近 — NASA Eyes follow 相机）
         if let Some(idx) = selected {
             if let Some(body) = runtime.sys.bodies.get(idx) {
-                camera.target = camera.target.lerp(to_mvec3(body.position), 0.1);
+                cam.target = cam.target.lerp(to_mvec3(body.position), 0.1);
             }
         }
 
         // -----------------------------------------------------------------
-        // 2D 正交投影渲染（不使用 3D 管线，避免天文尺度下 f32 精度问题）
+        // 真 3D 多行星轨道渲染（NASA Eyes solar-system 风格）
         // -----------------------------------------------------------------
         let s = ui_scale();
 
         // 深空背景 + 恒星（NASA Eyes）
         clear_background(COLOR_SPACE_BG);
-        stars.draw(&camera, sw, sh);
+        cam.set(); // 激活 3D 相机
+        stars.draw(&cam, sw, sh);
 
-        // 轨道环（每颗天体绕质心一条半透明环 — asteroids 首页风格）
+        // 轨道环（每颗天体的轨道平面 = position×velocity 法线，半透明）
         for body in runtime.sys.bodies.iter() {
-            let center = to_mvec3(body.position);
-            let radius = center.length();
+            if body.position.length() < 1.0e-6 {
+                continue; // 中心天体（太阳）画星系中心环
+            }
+            let c = body_color(&body.name);
+            let radius = to_mvec3(body.position).length();
             if radius > 0.0 {
-                let c = body_color(&body.name);
-                draw_orbit_ring_2d(
-                    &camera,
+                let axis = to_mvec3(body.position)
+                    .cross(to_mvec3(body.velocity))
+                    .normalize();
+                draw_orbit_ring_3d(
                     Vec3::ZERO,
                     radius,
-                    Vec3::Y,
-                    sw,
-                    sh,
-                    Color::new(c.r * 0.6, c.g * 0.6, c.b * 0.6, 0.22),
+                    axis,
+                    128,
+                    Color::new(c.r * 0.6, c.g * 0.6, c.b * 0.6, 0.25),
                 );
             }
         }
 
-        // 渐变轨迹线（旧→新：蓝 → 天体本色）
+        // 渐变轨迹（3D：旧→新从蓝到天体本色）
         for (i, body) in runtime.sys.bodies.iter().enumerate() {
-            if i < trails.len() {
-                let pts = trails[i].points();
-                if pts.len() > 1 {
-                    let c = body_color(&body.name);
-                    let old = Color::new(0.2, 0.45, 0.9, 0.35);
-                    let new = Color::new(c.r, c.g, c.b, 0.85);
-                    draw_gradient_path_2d(&camera, &pts, sw, sh, old, new);
+            if i >= trails.len() {
+                continue;
+            }
+            let pts = trails[i].points();
+            if pts.len() > 1 {
+                let c = body_color(&body.name);
+                let steps = pts.len() - 1;
+                for k in 0..steps {
+                    let t = k as f32 / steps as f32;
+                    let old = Color::new(0.2, 0.45, 0.9, 0.3);
+                    let seg = lerp_color(old, c, t);
+                    draw_line_3d(pts[k], pts[k + 1], seg);
                 }
             }
         }
 
-        // 发光天体（NASA Eyes 光晕）
+        // 发光天体（3D 球体；发光用 2D 光晕在默认相机层叠加）
         for body in runtime.sys.bodies.iter() {
             let pos = to_mvec3(body.position);
-            let (cx, cy) = camera.project_2d(pos, sw, sh);
-            // 天体半径投影到像素，最小 3px 保证可见
-            let r_px = camera.len_to_px(body.radius as f32, sw, sh).max(3.0);
+            let color = body_color(&body.name);
+            let r = body.radius as f32;
+            draw_sphere(pos, r, None, color);
+        }
+
+        // 切回默认相机叠加 2D 光晕 + 选中环 + 标签
+        OrbitalCamera::set_default();
+
+        for body in runtime.sys.bodies.iter() {
+            let pos = to_mvec3(body.position);
+            let (cx, cy) = cam.project_2d(pos, sw, sh);
+            let r_px = cam.len_to_px(body.radius as f32, sw, sh).max(3.0);
             let color = body_color(&body.name);
             let intensity = if body.name.contains("Sun") || body.name.contains("sun") {
                 2.5
@@ -178,11 +196,11 @@ async fn viz_main(scene_path: String) {
             );
         }
 
-        // 选中光环
+        // 选中光环 + 附加信息
         if let Some(idx) = selected {
             if let Some(body) = runtime.sys.bodies.get(idx) {
-                let (cx, cy) = camera.project_2d(to_mvec3(body.position), sw, sh);
-                let r_px = camera.len_to_px(body.radius as f32, sw, sh).max(3.0);
+                let (cx, cy) = cam.project_2d(to_mvec3(body.position), sw, sh);
+                let r_px = cam.len_to_px(body.radius as f32, sw, sh).max(3.0);
                 draw_selection_ring(cx, cy, r_px);
             }
         }
