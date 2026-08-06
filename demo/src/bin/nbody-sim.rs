@@ -72,8 +72,13 @@ async fn viz_main(scene_path: String) {
 
     loop {
         cam.update();
-        if is_key_down(KeyCode::Escape) {
+        if is_key_pressed(KeyCode::Escape) {
             break;
+        }
+        // Home = 回到总览（取消跟随，复位视角）
+        if is_key_pressed(KeyCode::Home) {
+            selected = None;
+            cam.reset(Vec3::ZERO, (max_dist * 2.5) as f32);
         }
         time_bar.update();
         // 窗口尺寸（点击检测 / 渲染共用）

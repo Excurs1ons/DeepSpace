@@ -183,6 +183,8 @@ async fn run_3d() {
     load_custom_font(FONT_PATH).await;
 
     let mut cam = OrbitalCamera::new(Vec3::new(0.0, 6_500_000.0, 0.0), 200_000.0);
+    let init_target = cam.target;
+    let init_distance = cam.distance;
 
     // NASA Eyes 风格：星空 + 时间控制条 + 点击选中
     let stars = StarField::new(600, 0x1E4E0);
@@ -193,6 +195,12 @@ async fn run_3d() {
     loop {
         let _dt = get_frame_time().min(0.05);
         cam.update();
+
+        // Home = 回到初始总览视角
+        if is_key_pressed(KeyCode::Home) {
+            selected = None;
+            cam.reset(init_target, init_distance);
+        }
         time_bar.update();
 
         // 推进世界（时间条控制，rate 为 1 时等价于原 10 步/帧）

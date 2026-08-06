@@ -129,6 +129,8 @@ pub struct OrbitalCamera {
     pub fovy: f32,
     /// 鼠标拖拽灵敏度
     pub sensitivity: f32,
+    /// 右键平移灵敏度（屏幕比例，0.5 = 半屏位移完成目标平移）
+    pub pan_sensitivity: f32,
     /// 缩放灵敏度
     pub zoom_sensitivity: f32,
     /// 平滑系数（0~1，每帧趋近目标的比例，0.5 ≈ 2-帧 lerp）
@@ -138,6 +140,7 @@ pub struct OrbitalCamera {
     pub max_distance: f32,
     // 鼠标拖拽状态（手动跟踪 delta）
     prev_mouse: Option<(f32, f32)>,
+    prev_mouse_right: Option<(f32, f32)>,
     // 平滑缩放的目标距离
     target_distance: f32,
 }
@@ -152,16 +155,19 @@ impl OrbitalCamera {
             elevation: 0.4,
             fovy: std::f32::consts::FRAC_PI_4,
             sensitivity: 0.005,
+            pan_sensitivity: 0.6,
             zoom_sensitivity: 0.1,
             zoom_smooth_factor: 0.15,
             min_distance: 1000.0,
             max_distance: 1.0e12,
             prev_mouse: None,
+            prev_mouse_right: None,
         }
     }
 
-    /// 更新相机状态（鼠标拖拽旋转 + 滚轮缩放）
+    /// 更新相机状态（鼠标拖拽旋转 + 右键平移 + 滚轮缩放）
     pub fn update(&mut self) {
+        // 左键拖拽 = 环绕旋转
         if is_mouse_button_down(MouseButton::Left) {
             let (mx, my) = mouse_position();
             if let Some((px, py)) = self.prev_mouse {
@@ -173,6 +179,25 @@ impl OrbitalCamera {
             self.prev_mouse = Some((mx, my));
         } else {
             self.prev_mouse = None;
+        }
+
+        // 右键拖拽 = 平移 target（沿屏幕平面，NASA Eyes pan）
+        if is_mouse_button_down(MouseButton::Right) {
+            let (mx, my) = mouse_position();
+            if let Some((px, py)) = self.prev_mouse_right {
+                let dx = mx - px;
+                let dy = my - py;
+                // 世界位移 = 屏幕像素位移 × (目标距离 / 投影高度)
+                // 投影高度 ≈ 2·d·tan(fovy/2)，半屏拖动 ≈ 平移一个视口宽
+                let world_per_px =
+                    (2.0 * self.distance * (self.fovy * 0.5).tan()) / screen_height().max(1.0);
+                let right = self.right_vector();
+                let up = self.up_vector();
+                self.target -= (right * dx - up * dy) * (world_per_px * self.pan_sensitivity);
+            }
+            self.prev_mouse_right = Some((mx, my));
+        } else {
+            self.prev_mouse_right = None;
         }
 
         let (_dx, dy) = mouse_wheel();
@@ -188,6 +213,34 @@ impl OrbitalCamera {
 
         // 平滑趋近目标距离（每帧 15%，约 15 帧到达 90%）
         self.distance += (self.target_distance - self.distance) * self.zoom_smooth_factor;
+    }
+
+    /// 相机右方向（世界空间，防万向锁）
+    fn right_vector(&self) -> Vec3 {
+        let eye = self.eye_position();
+        let fwd = (self.target - eye).normalize();
+        if fwd.dot(Vec3::Y).abs() > 0.999 {
+            Vec3::X
+        } else {
+            fwd.cross(Vec3::Y).normalize()
+        }
+    }
+
+    /// 相机上方向（世界空间）
+    fn up_vector(&self) -> Vec3 {
+        let eye = self.eye_position();
+        let fwd = (self.target - eye).normalize();
+        let right = self.right_vector();
+        right.cross(fwd).normalize()
+    }
+
+    /// 复位到初始视角（NASA Eyes "回到总览"）
+    pub fn reset(&mut self, target: Vec3, distance: f32) {
+        self.target = target;
+        self.distance = distance;
+        self.target_distance = distance;
+        self.azimuth = 0.0;
+        self.elevation = 0.4;
     }
 
     /// 返回 Camera3D 供 macroquad 使用
