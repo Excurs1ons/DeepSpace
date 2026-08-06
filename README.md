@@ -100,6 +100,7 @@ cargo ndk -t arm64-v8a -o android-libs build -p deepspace --release
 | **大气/再入** | US Std 1976 大气、Sutton-Graves 加热、损伤传播 |
 | **任务系统** | 数据驱动阶段机、可插拔制导（重力转弯 / PEG）、双向推进剂、级分离 |
 | **参考系** | `FrameGraph` 层次化参考系、旋转系 Coriolis/离心力、LCA 跨帧距离 |
+| **3D 可视化** | NASA Eyes 风格：3D 多行星轨道（轨道平面法线 = pos×vel）、渐变轨迹、发光天体、跟随相机 |
 
 ---
 
@@ -108,10 +109,21 @@ cargo ndk -t arm64-v8a -o android-libs build -p deepspace --release
 ```bash
 cargo run -p deepspace-demo --bin rocket-sim                # 3D 火箭任务（Artemis II）
 cargo run -p deepspace-demo --bin rocket-sim -- --headless  # 控制台模式
-cargo run -p deepspace-demo --bin nbody-sim                 # 3D N 体沙盘
+cargo run -p deepspace-demo --bin nbody-sim                 # 3D N 体沙盘（NASA Eyes 风格）
 cargo run -p deepspace-demo --bin nbody-sim -- --headless --scene scenes/figure8.scene
 cargo run -p deepspace-demo --bin interop-sim -- --headless # 拦截闭环演示
 ```
+
+### 可视化操作（NASA Eyes 镜头）
+
+| 操作 | 效果 |
+|------|------|
+| 左键拖拽 | 环绕旋转 |
+| 右键拖拽 | 平移视角（pan） |
+| 滚轮 | 面向目标平滑缩放 |
+| 点击天体 | 相机平滑跟随该天体 |
+| `Home` | 回到总览视角（取消跟随） |
+| `ESC` | 退出 |
 
 ---
 
